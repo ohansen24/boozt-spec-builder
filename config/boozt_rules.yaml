@@ -1,0 +1,162 @@
+# Boozt intake rules, versioned to Boozt Information Guide (Beauty) v1.3.
+# Enums extracted from docs/BooztGuide_v1.3.pdf; enums fail closed everywhere.
+guide_version: "1.3"
+name_max_chars: 60
+size_pattern: '^\d+(\.\d+)? (ml|g|pcs)$|^One Size$'
+
+# Guide section 1.1.19. Matching is case-insensitive; emit uses these display forms.
+categories:
+  - Hair care
+  - Hair brushes
+  - Accessories
+  - Beauty accessories
+  - Sets
+  - Shaving products
+  - Deodorants
+  - Makeup
+  - Foundation
+  - Beauty electronics
+  - Perfumes
+  - Sex/intimacy
+  - Self Tan
+  - Beard care
+  - Home & Spa
+  - Oral care
+  - Body Care
+  - Perfume set
+  - Skin care
+  - Nail care tools
+  - Makeup tools
+  - Nail polish
+
+# Guide color filter codes. 1017 is used for skincare; 1018 only for
+# foundations and concealers.
+color_codes:
+  1001: Cream
+  1002: Beige
+  1003: Pink
+  1004: Blue
+  1005: Green
+  1006: Yellow
+  1007: Orange
+  1008: Purple
+  1009: Red
+  1010: Brown
+  1011: Grey
+  1012: Black
+  1013: White
+  1014: Silver
+  1015: Gold
+  1016: Multi-Colored
+  1017: Clear
+  1018: Natural
+  1019: Navy
+  1020: Khaki green
+  1021: Coral
+  1022: Burgundy
+
+# Categorization keyword rules (build kit 6.7), keyed on product name, never
+# the ODM subcategory. foundation_family is checked FIRST: it is the single
+# biggest error surface (guide files foundations/concealers/tinted moisturizers
+# under "Foundation", not "Makeup").
+category_rules:
+  foundation_family:
+    category: Foundation
+    keywords:
+      - foundation
+      - concealer
+      - bb cream
+      - cc cream
+      - tinted moisturizer
+  makeup:
+    category: Makeup
+    keywords:
+      - blush
+      - bronzer
+      - bronzing
+      - powder
+      - primer
+      - mascara
+      - eyeshadow
+      - eyeliner
+      - eye liner
+      - brow
+      - eyebrow
+      - lip
+      - lipstick
+      - highlighter
+      - luminizer
+  makeup_tools:
+    category: Makeup tools
+    keywords:
+      - brush
+      - applicator
+      - eyelash curler
+  sets:
+    category: Sets
+    keywords:
+      - set
+      - kit
+      - advent calendar
+  nail_polish:
+    category: Nail polish
+    keywords:
+      - nail polish
+      - nail lacquer
+      - polish remover
+  skin_care:
+    category: Skin care
+    keywords:
+      - serum
+      - moisturiser
+      - moisturizer
+      - cleanser
+      - toner
+      - face cream
+  body_care:
+    category: Body Care
+    keywords:
+      - body lotion
+      - body cream
+      - hand cream
+      - hand balm
+
+# Boozt Color code rules (build kit 6.7).
+color_code_rules:
+  # Rule 1: skincare and colorless products -> 1017 Clear.
+  clear_categories:
+    - Skin care
+    - Body Care
+    - Hair care
+    - Deodorants
+  # Rule 2: foundation family -> 1018 Natural. Deterministic per the guide but
+  # pending her confirmation (open question 2) -> always flagged yellow.
+  foundation_family_code: 1018
+  foundation_family_pending: true
+  # Rule 3b: curated shade lexicon, grown per run. Exact match on the
+  # normalized shade unless match: prefix. Seeded only with kit-cited entries
+  # plus the trivially safe Clear.
+  shade_lexicon:
+    - shade: orgasm
+      code: 1003
+    - shade: deep rose
+      code: 1003
+    - shade: laguna
+      code: 1010
+      match: prefix
+    - shade: clear
+      code: 1017
+
+# Observed no-color conventions across finished sheets (open question 3:
+# which to standardize on). Mixed usage is a lint flag.
+no_color_aliases:
+  - CLEAR
+  - NO COLOR
+  - NO COLOUR
+  - NO SHADE
+
+# Dangerous goods: packing group vs flash point (guide table; Phase 1 module,
+# validation function tested now). Temperatures in Celsius.
+pg_flash_point:
+  "II": {max_exclusive: 23}
+  "III": {min_inclusive: 23, max_inclusive: 61}
