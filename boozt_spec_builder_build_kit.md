@@ -140,10 +140,15 @@ Match case-insensitively on a normalized form (collapse whitespace, strip parent
 
 Per brand, in order of preference:
 
-1. Brand adapter. NARS runs Salesforce Commerce Cloud (SFCC). Facts confirmed so far: PDPs live at /en/{slug}/{gtin13}.html (single-shade items) and /en/{slug}/{masterId}.html with masterId like 999NAC0000206 (multi-shade items); shade preselection works via ?dwvar_{masterId}_color={value}; plain HTTP returns a shell without the shade (JS-rendered), so rendering is required unless the SFCC product API is used. Adapter strategy, try in order:
-   a. SFCC shop API: GET /dw/shop/v*/products/{gtin13}?expand=variations,availability with the storefront client_id (capture once via browser DevTools on any PDP, Network tab, filter "dw/shop"; store in .env). Returns structured JSON: product name, variation attributes (shade list with values), size, master/variant linkage. Preferred: structured, complete, no rendering.
-   b. Playwright headless render of the gtin13 PDP; parse embedded JSON first (JSON-LD, dataLayer, window state objects), labeled DOM second.
+1. Brand adapter. NARS runs Salesforce Commerce Cloud SFRA (live capture, 2026-07-02): there is NO browser-side OCAPI client_id — the OCAPI/.env path is dead, deleted from the plan. Confirmed architecture:
+   - Controller base: https://www.narscosmetics.eu/on/demandware.store/Sites-nars_eu-Site/default/
+   - Variation endpoint: Product-Variation?pid={masterId}&dwvar_{masterId}_color={gtin13}&Quantity=1&format=ajax — the dwvar color VALUE is the variant's GTIN-13 ("0" + ODM ean12), so the endpoint is keyed by barcode: requesting a shade by GTIN and parsing the returned payload satisfies the GTIN-anchor rule natively. Record each call's full URL as provenance.
+   - PDPs live at /en/{slug}/{gtin13}.html, addressed by variant GTIN. Master example: 999NAC0000192 (Powder Blush) with variants 0194251140407 / 0194251140414.
+   Adapter strategy, try in order:
+   a. Plain httpx GET of one variant PDP per base-name group to discover the master pid and full swatch list, then cookie-less httpx Product-Variation per EAN; assert the returned variant id equals the requested gtin13, else reject.
+   b. If a response is a bot-shell or the controller requires a session: Playwright, accept the consent banner once, keep the context alive, and route calls through the context's APIRequestContext so they inherit real runtime cookies/fingerprint. Never hardcode captured cookies — mint fresh sessions at runtime.
    c. Firecrawl API render as managed fallback if the site fights headless traffic.
+   Ignore Bazaarvoice, genki, and analytics endpoints entirely.
 2. Generic resolver (any brand, and validators): web search for "{gtin13}" and "{ean12} {brand}", collect candidate URLs, fetch, parse JSON-LD/microdata with extruct, accept only documents whose gtin/gtin12/gtin13/ean equals the item. Extract Product.name, color/variant, size, and ingredient fields when present.
 3. Validator pool (independent from the brand family): Boots, Sephora, Douglas, Flaconi, Lookfantastic for name/shade/size; INCIDecoder, Boots, SkinSafe for INCI. Same GTIN-anchor rule. A page without a GTIN assertion may only serve as WEAK support via exact brand+product+shade string match, and can never turn a field green on its own. narscosmetics.eu, .co.uk and .com count as ONE source family, not mutual validators.
 
@@ -272,4 +277,4 @@ category_overrides:
 
 ## 13. Ops notes
 
-Secrets via .env, never committed: ANTHROPIC_API_KEY, optional FIRECRAWL_API_KEY, optional SFCC client_id. Politeness defaults always on (rate limit, backoff, cache-first). Each run writes to a timestamped folder with an input hash for reproducibility. The tool's honest guarantee is not "100% correct" but "100% of shipped values are source-verified or explicitly flagged for review"; nothing is ever silently guessed.
+Secrets via .env, never committed: ANTHROPIC_API_KEY, optional FIRECRAWL_API_KEY. (The SFCC client_id entry is obsolete: narscosmetics.eu is SFRA with no browser-side client_id.) Politeness defaults always on (rate limit, backoff, cache-first). Each run writes to a timestamped folder with an input hash for reproducibility. The tool's honest guarantee is not "100% correct" but "100% of shipped values are source-verified or explicitly flagged for review"; nothing is ever silently guessed.

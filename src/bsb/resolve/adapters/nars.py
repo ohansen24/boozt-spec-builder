@@ -1,10 +1,223 @@
-"""NARS SFCC adapter (Phase 1).
+"""NARS SFCC-SFRA adapter (build kit 6.3, live-captured architecture).
 
-Strategy per build kit section 6.3: SFCC shop API with storefront client_id,
-else Playwright render of the gtin13 PDP, else Firecrawl. Shade-family
-efficiency: resolve 27 masters once, then confirm the 119 variants.
+Master-first flow:
+1. discover_master: one variant PDP per base-name group, reached through the
+   Product-Show?pid={gtin13} controller (301s to the canonical PDP — never
+   guess slugs: ODM base names differ from site names, e.g. ODM "Talc-Free
+   Blush" is "POWDER BLUSH" on-site). Parses the product-state object for the
+   master pid and full swatch list, plus size and the INCI accordion.
+2. resolve_variant: Product-Variation?pid={master}&dwvar_{master}_color=
+   {gtin13}&Quantity=1&format=ajax per EAN. The dwvar color value IS the
+   variant's GTIN-13, so the call is keyed by barcode; the returned partial's
+   product-state "ID" must equal the requested gtin13 or the result is
+   rejected (GTIN-anchor rule, charter principle 2).
+
+Escalation: plain cookie-less httpx first; on a bot-shell response the
+adapter switches to the Playwright rung (consent accepted once, context kept
+alive) for the rest of the run. Every payload is cached; resolved variants
+land in cache/eans/{gtin13}.json with full-URL provenance.
 """
 
+import re
+from datetime import datetime
+from urllib.parse import quote
 
-def resolve(gtin13: str) -> dict:
-    raise NotImplementedError("Phase 1: NARS adapter not implemented yet")
+from bs4 import BeautifulSoup
+from pydantic import BaseModel, Field
+
+from bsb.extract.structured import (
+    jsonld_selected_shade,
+    parse_jsonld_products,
+    parse_sfcc_product_state,
+)
+from bsb.fetch.cache import CachedFetch, EanCache
+from bsb.fetch.ladder import BotShell, PlaywrightSession, PoliteFetcher
+
+_SIZE_DIV = re.compile(
+    r'class="attribute single-size">\s*<div class="value">\s*<span>([^<]+)</span>', re.DOTALL
+)
+
+
+class MasterResult(BaseModel):
+    master_id: str
+    product_name: str
+    pdp_url: str  # final canonical URL (provenance)
+    discovered_via_gtin: str
+    shade_by_gtin: dict[str, str] = Field(default_factory=dict)
+    size_text: str | None = None
+    inci_text: str | None = None
+    inci_selected_gtin: str | None = None  # which shade the PDP had selected
+    fetched_at: datetime | None = None
+    from_cache: bool = False
+
+
+class VariantResult(BaseModel):
+    gtin13: str
+    ean12: str
+    ok: bool
+    master_id: str
+    url: str  # full Product-Variation URL (provenance)
+    product_name: str | None = None
+    shade: str | None = None
+    size_text: str | None = None
+    returned_id: str | None = None
+    reject_reason: str | None = None
+    snippet: str = ""
+    fetched_at: datetime | None = None
+    from_cache: bool = False
+    via: str = "httpx"
+
+
+def _has_product_state(text: str) -> bool:
+    return parse_sfcc_product_state(text) is not None
+
+
+def extract_inci(html: str) -> str | None:
+    """The INGREDIENTS accordion body, excluding the trailing may-evolve
+    disclaimer paragraph. Kept verbatim (NARS separates tokens with middle
+    dots); normalization happens downstream."""
+    soup = BeautifulSoup(html, "lxml")
+    for title in soup.select("a.accordion-title"):
+        if title.get_text(strip=True).upper() != "INGREDIENTS":
+            continue
+        item = title.find_parent(class_="accordion-item")
+        if item is None:
+            continue
+        inner = item.select_one(".pdp-content-inner")
+        if inner is None:
+            continue
+        for p in inner.find_all("p"):
+            p.decompose()
+        text = " ".join(inner.get_text(" ", strip=True).split())
+        return text.strip(" ·") or None
+    return None
+
+
+class NarsAdapter:
+    def __init__(
+        self,
+        fetcher: PoliteFetcher,
+        brand_cfg: dict,
+        ean_cache: EanCache,
+        playwright: PlaywrightSession | None = None,
+    ):
+        self.fetcher = fetcher
+        self.controller_base = str(brand_cfg["controller_base"]).rstrip("/") + "/"
+        self.ean_cache = ean_cache
+        self.playwright = playwright
+        self._escalated = False
+
+    def _controller(self, name: str, **params: object) -> str:
+        query = "&".join(f"{k}={quote(str(v), safe='')}" for k, v in params.items())
+        return f"{self.controller_base}{name}?{query}"
+
+    def _get(self, url: str, *, referer: str | None, ajax: bool) -> CachedFetch:
+        """httpx rung with automatic one-way escalation to Playwright."""
+        if not self._escalated:
+            try:
+                return self.fetcher.get(
+                    url, referer=referer, ajax=ajax, validator=_has_product_state
+                )
+            except BotShell:
+                if self.playwright is None:
+                    raise
+                self._escalated = True
+        if self.playwright is None:
+            raise RuntimeError("escalated without a Playwright session")
+        return self.playwright.get(url, referer=referer or url, ajax=ajax)
+
+    def discover_master(self, gtin13: str) -> MasterResult:
+        show_url = self._controller("Product-Show", pid=gtin13)
+        fetch = self._get(show_url, referer=None, ajax=False)
+        state = parse_sfcc_product_state(fetch.text)
+        if state is None:
+            raise ValueError(f"{show_url}: no product-state object in PDP payload")
+
+        master_id = state.get("masterID") or state.get("ID")
+        shades: dict[str, str] = {}
+        for key, variant in (state.get("variants") or {}).items():
+            if not key.startswith("color-"):
+                continue
+            shade = (variant.get("attributes") or {}).get("color")
+            if shade:
+                shades[variant["id"]] = shade
+
+        size_match = _SIZE_DIV.search(fetch.text)
+        return MasterResult(
+            master_id=str(master_id),
+            product_name=str(state.get("name") or ""),
+            pdp_url=fetch.final_url,
+            discovered_via_gtin=gtin13,
+            shade_by_gtin=shades,
+            size_text=size_match.group(1).strip() if size_match else None,
+            inci_text=extract_inci(fetch.text),
+            inci_selected_gtin=str(state.get("ID") or gtin13),
+            fetched_at=fetch.fetched_at,
+            from_cache=fetch.from_cache,
+        )
+
+    def resolve_variant(self, master: MasterResult, gtin13: str) -> VariantResult:
+        url = self._controller(
+            "Product-Variation",
+            pid=master.master_id,
+            **{f"dwvar_{master.master_id}_color": gtin13},
+            Quantity=1,
+            format="ajax",
+        )
+        fetch = self._get(url, referer=master.pdp_url, ajax=True)
+        state = parse_sfcc_product_state(fetch.text)
+
+        ean12 = gtin13[1:] if len(gtin13) == 13 and gtin13.startswith("0") else gtin13
+        result = VariantResult(
+            gtin13=gtin13,
+            ean12=ean12,
+            ok=False,
+            master_id=master.master_id,
+            url=url,
+            fetched_at=fetch.fetched_at,
+            from_cache=fetch.from_cache,
+            via=fetch.via,
+        )
+
+        if state is None:
+            result.reject_reason = "no product-state object in variation partial"
+            return result
+
+        returned_id = str(state.get("ID") or "")
+        result.returned_id = returned_id
+        if returned_id != gtin13:
+            # GTIN-anchor rule: never adopt a payload for a different variant
+            result.reject_reason = (
+                f"variation partial returned ID {returned_id!r}, requested {gtin13!r}"
+            )
+            return result
+
+        variant_entry = (state.get("variants") or {}).get(f"color-{gtin13}", {})
+        shade = (variant_entry.get("attributes") or {}).get("color")
+        if shade is None:
+            shade = jsonld_selected_shade(parse_jsonld_products(fetch.text))
+        size_match = _SIZE_DIV.search(fetch.text)
+
+        result.ok = True
+        result.product_name = str(state.get("name") or "")
+        result.shade = shade
+        result.size_text = size_match.group(1).strip() if size_match else None
+        result.snippet = f'"ID":"{returned_id}" … "color":"{shade}"'
+
+        self.ean_cache.write(
+            gtin13,
+            {
+                "gtin13": gtin13,
+                "ean12": ean12,
+                "master_id": master.master_id,
+                "product_name": result.product_name,
+                "shade": shade,
+                "size_text": result.size_text,
+                "source_url": url,
+                "pdp_url": master.pdp_url,
+                "method": "sfcc_api",
+                "via": result.via,
+                "fetched_at": fetch.fetched_at.isoformat(timespec="seconds"),
+            },
+        )
+        return result

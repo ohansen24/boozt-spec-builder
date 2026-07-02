@@ -110,14 +110,71 @@ def _print_summary(s: RunSummary) -> None:
 
 
 @main.command()
-@click.option("--gtin", required=True)
-@click.option("--brand", required=True)
+@click.option("--gtin", required=True, help="GTIN-13 (0 + ODM ean12)")
+@click.option("--brand", "brand_key", required=True)
 @click.option("-v", "--verbose", is_flag=True)
-def resolve(gtin: str, brand: str, verbose: bool) -> None:
-    """Single-item debug resolve (Phase 1)."""
-    raise click.ClickException(
-        "Phase 1: resolve is not implemented yet (no network code in Phase 0)"
-    )
+@click.option(
+    "--config",
+    "config_dir",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=DEFAULT_CONFIG_DIR,
+    show_default=True,
+)
+@click.option(
+    "--cache-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=Path("cache"),
+    show_default=True,
+)
+def resolve(gtin: str, brand_key: str, verbose: bool, config_dir: Path, cache_dir: Path) -> None:
+    """Single-item debug resolve: master discovery + GTIN-anchored variation."""
+    from bsb.fetch.cache import EanCache, HttpCache
+    from bsb.fetch.ladder import PlaywrightSession, PoliteFetcher
+    from bsb.resolve.adapters.nars import NarsAdapter
+
+    brands = load_brands(config_dir)
+    brand_key = brand_key.lower()
+    brand_cfg = brands.get(brand_key)
+    if not brand_cfg or brand_cfg.get("adapter") != "nars_sfcc":
+        raise click.BadParameter(f"no adapter configured for brand {brand_key!r}")
+
+    http_cache = HttpCache(cache_dir)
+    fetcher = PoliteFetcher(http_cache)
+    playwright = PlaywrightSession(http_cache, fetcher.limiter)
+    adapter = NarsAdapter(fetcher, brand_cfg, EanCache(cache_dir), playwright)
+
+    try:
+        master = adapter.discover_master(gtin)
+        click.echo(f"master     {master.master_id}  ({master.product_name})")
+        click.echo(f"  pdp      {master.pdp_url}" + ("  [cache]" if master.from_cache else ""))
+        click.echo(f"  shades   {len(master.shade_by_gtin)} in swatch list")
+        click.echo(f"  size     {master.size_text!r}")
+        if master.inci_text:
+            shown = master.inci_text if verbose else master.inci_text[:120] + "…"
+            click.echo(
+                f"  inci     {shown} (captured with shade {master.inci_selected_gtin} selected)"
+            )
+        if verbose:
+            for g, shade in sorted(master.shade_by_gtin.items()):
+                click.echo(f"           {g}  {shade}")
+
+        variant = adapter.resolve_variant(master, gtin)
+        click.echo(
+            f"\nvariant    {variant.gtin13}  ok={variant.ok}  via={variant.via}"
+            + ("  [cache]" if variant.from_cache else "")
+        )
+        if variant.ok:
+            click.echo(f"  name     {variant.product_name}")
+            click.echo(f"  shade    {variant.shade}")
+            click.echo(f"  size     {variant.size_text!r}")
+            click.echo(f"  anchor   returned ID == requested GTIN ({variant.returned_id})")
+        else:
+            click.echo(f"  REJECTED: {variant.reject_reason}")
+        click.echo(f"  url      {variant.url}")
+        click.echo(f"  snippet  {variant.snippet}")
+    finally:
+        fetcher.close()
+        playwright.close()
 
 
 @main.command()

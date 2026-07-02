@@ -61,9 +61,9 @@ def test_shade_split(odm):
     assert odm.rows[0].shade == "Orgasm"
     assert split_name("Soft Matte Primer") == ("Soft Matte Primer", None)
     # only the FIRST " - " splits; en-dashes inside shades survive
-    assert split_name("Foundation - New Shade L3.25 – Lima (Fn)") == (  # noqa: RUF001
+    assert split_name("Foundation - New Shade L3.25 – Lima (Fn)") == (
         "Foundation",
-        "New Shade L3.25 – Lima (Fn)",  # noqa: RUF001
+        "New Shade L3.25 – Lima (Fn)",
     )
 
 

@@ -55,8 +55,9 @@ def test_bsb_run_unknown_brand(tmp_path):
     assert "unknown brand" in result.output
 
 
-def test_resolve_is_phase_1():
+def test_resolve_rejects_brand_without_adapter():
+    """No network: brands without an adapter must fail before any fetch."""
     runner = CliRunner()
-    result = runner.invoke(main, ["resolve", "--gtin", "0194251147000", "--brand", "nars"])
+    result = runner.invoke(main, ["resolve", "--gtin", "0194251147000", "--brand", "olaplex"])
     assert result.exit_code != 0
-    assert "Phase 1" in result.output
+    assert "no adapter configured" in result.output

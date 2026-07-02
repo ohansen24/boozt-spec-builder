@@ -5,6 +5,9 @@ nars:
   adapter: nars_sfcc
   domains: [narscosmetics.eu]
   gtin_form: "13"
+  # SFRA storefront (live capture 2026-07-02); no browser-side OCAPI client_id
+  controller_base: https://www.narscosmetics.eu/on/demandware.store/Sites-nars_eu-Site/default/
+  pdp_base: https://www.narscosmetics.eu/en/
   style_prefix: null # OPEN QUESTION 1: NARS prefix unconfirmed -> column stays MANUAL
   gender_default: F # per her finished work; ODM's blanket "unisex" is unreliable
   country_iso: from_odm
