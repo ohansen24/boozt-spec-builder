@@ -311,3 +311,19 @@ def test_validator_only_value_ships_yellow():
         assert entry.ok
         assert result.swatch_warnings and "not purchasable" in result.swatch_warnings[0]
         assert not result.blocking_anomalies
+
+
+def test_shades_agree_identity_rules():
+    """Live styling variants must count as the same shade; different shades
+    must not."""
+    from bsb.validate.matrix import shades_agree
+
+    assert shades_agree("Café Con Leche", "Cafe Con Leche")
+    assert shades_agree("Crème Brulée", "Creme Brulee")
+    assert shades_agree("Laguna 01", "1")
+    assert shades_agree("888 Dolce Vita", "Dolce Vita")
+    assert shades_agree("Orgasm", "ORGASM")
+    assert not shades_agree("Laguna 01", "2")
+    assert not shades_agree("Fiji", "Punjab")
+    assert not shades_agree("Orgasm", "Orgasm X")
+    assert not shades_agree("Laguna 01", "Deep 01")

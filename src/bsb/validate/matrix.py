@@ -11,6 +11,7 @@
 """
 
 import re
+import unicodedata
 from difflib import SequenceMatcher
 
 from bsb.models import FieldValue, SourceRef
@@ -18,7 +19,7 @@ from bsb.models import FieldValue, SourceRef
 _MAY_CONTAIN = re.compile(
     r"\[?\s*\+\s*/?-?\s*\(?\s*may contain|may contain/peut contenir", re.IGNORECASE
 )
-_INCI_SPLIT = re.compile(r"\s*[·,;]\s*")
+_INCI_SPLIT = re.compile(r"\s*[·•,;]\s*")
 _PARENS = re.compile(r"\([^()]*\)")
 _SIZE_TOKEN = re.compile(r"\b\d+(?:\.\d+)?\s*(?:ml|g|pcs)\b", re.IGNORECASE)
 
@@ -30,6 +31,38 @@ def similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a.casefold().strip(), b.casefold().strip()).ratio()
 
 
+def _fold_accents(text: str) -> str:
+    return "".join(
+        ch for ch in unicodedata.normalize("NFKD", text) if not unicodedata.combining(ch)
+    )
+
+
+def shades_agree(a: str, b: str) -> bool:
+    """Shade IDENTITY comparison across sources that style shades differently
+    (all live cases): 'Café Con Leche' vs 'Cafe Con Leche' (accents),
+    'Laguna 01' vs '1' (retailer publishes the bare shade number),
+    '888 Dolce Vita' vs 'Dolce Vita' (brand prefixes the shade number).
+    Word tokens and numeric tokens are compared separately; a side missing
+    one kind defers to the other side on it."""
+    fa = _fold_accents(a).casefold().strip()
+    fb = _fold_accents(b).casefold().strip()
+    if fa == fb:
+        return True
+
+    def parts(text: str) -> tuple[list[int], list[str]]:
+        digits = [int(d) for d in re.findall(r"\d+", text)]
+        words = re.findall(r"[a-z]+", text)
+        return digits, words
+
+    digits_a, words_a = parts(fa)
+    digits_b, words_b = parts(fb)
+    digits_match = digits_a == digits_b or not digits_a or not digits_b
+    words_match = words_a == words_b or not words_a or not words_b
+    # at least one dimension must positively match, the other may be absent
+    has_positive = (digits_a and digits_a == digits_b) or (words_a and words_a == words_b)
+    return bool(digits_match and words_match and has_positive)
+
+
 def combine_exact(
     field_label: str,
     primary_value: str | None,
@@ -37,8 +70,10 @@ def combine_exact(
     validator_value: str | None,
     validator_ref: SourceRef | None,
     notes: list[str] | None = None,
+    agree=None,
 ) -> FieldValue:
-    """Exact (casefolded) agreement for strong signals like shade and size."""
+    """Exact (casefolded) agreement for strong signals like shade and size.
+    `agree(a, b) -> bool` overrides the comparison (shade identity)."""
     notes = list(notes or [])
     if primary_value is None:
         if validator_value is not None:
@@ -60,7 +95,12 @@ def combine_exact(
             value=primary_value, status="SINGLE_SOURCE", primary=primary_ref, notes="; ".join(notes)
         )
 
-    if primary_value.casefold().strip() == validator_value.casefold().strip():
+    matches = (
+        agree(primary_value, validator_value)
+        if agree is not None
+        else primary_value.casefold().strip() == validator_value.casefold().strip()
+    )
+    if matches:
         notes.append("two independent families agree")
         return FieldValue(
             value=primary_value,

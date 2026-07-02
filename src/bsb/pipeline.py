@@ -179,7 +179,13 @@ def apply_resolution(
     from bsb.categorize.rules import categorize, color_code_for
     from bsb.normalize.boozt import normalize_color_name, normalize_size, normalize_style_name
     from bsb.validate.guide import check_name_length
-    from bsb.validate.matrix import combine_exact, compare_inci, confirm_name, odm_name_check
+    from bsb.validate.matrix import (
+        combine_exact,
+        compare_inci,
+        confirm_name,
+        odm_name_check,
+        shades_agree,
+    )
 
     anomalies: list[str] = []
 
@@ -240,13 +246,17 @@ def apply_resolution(
             notes="no shade on brand site — no-color convention pending (open question 3)",
         )
     else:
-        record.color_name = combine_exact("shade", site_shade, nars_ref, lf_shade, lf_ref)
+        record.color_name = combine_exact(
+            "shade", site_shade, nars_ref, lf_shade, lf_ref, agree=shades_agree
+        )
 
     # --- size: exact match, then ODM tertiary check
     site_size = normalize_size(variant.size_text)
     lf_size = normalize_size(lf_product.size_text) if lf_variant and lf_product.size_text else None
     record.size = combine_exact("size", site_size, nars_ref, lf_size, lf_ref)
     odm_size = normalize_size(row.hints.get("size"), row.hints.get("size_unit"))
+    if record.size.status == "CONFLICT" and odm_size:
+        record.size.notes += f"; ODM hint: {odm_size}"
     if odm_size and record.size.value and odm_size != record.size.value:
         anomalies.append(
             f"{row.ean12} ({row.base_name}): site size {record.size.value!r} "
@@ -258,7 +268,13 @@ def apply_resolution(
 
     # --- ingredients: brand INCI (comma-space separators), weak support notes
     if master.inci_text:
-        inci_boozt = master.inci_text.replace(" · ", ", ").replace("·", ",").strip(" ,")
+        inci_boozt = (
+            master.inci_text.replace(" · ", ", ")
+            .replace(" • ", ", ")
+            .replace("·", ",")
+            .replace("•", ",")
+            .strip(" ,")
+        )
         notes = [
             f"brand INCI captured with shade {master.inci_selected_gtin} selected; "
             "one list per product (may-contain covers all shades)"

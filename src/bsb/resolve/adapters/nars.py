@@ -84,13 +84,20 @@ def _has_product_state(text: str) -> bool:
 
 
 _MIN_INCI_DOTS = 3
+_INCI_SEPARATORS = (" · ", " • ")  # NARS mixes middle dots and bullets per PDP
+_INCI_LABEL = re.compile(r"^[A-Z][A-Z /-]*INGREDIENTS?\s*:\s*")
+
+
+def _inci_separator_count(text: str) -> int:
+    return max(text.count(sep) for sep in _INCI_SEPARATORS)
 
 
 def extract_inci(html: str) -> str | None:
     """The INCI list from the INGREDIENTS accordion. Accordions mix marketing
     copy ("KEY INGREDIENTS: ... Helps soothe ...") and a disclaimer paragraph
     with the real list; the INCI segment is identified as the block with the
-    most middle-dot separators (NARS always publishes " · "-separated INCI).
+    most separator hits — NARS publishes " · "-separated INCI on some PDPs
+    and " • "-separated (with a "PARABEN FREE INGREDIENTS:" label) on others.
     Kept verbatim; normalization happens downstream."""
     soup = BeautifulSoup(html, "lxml")
     for title in soup.select("a.accordion-title"):
@@ -114,11 +121,12 @@ def extract_inci(html: str) -> str | None:
 
         best, best_dots = None, 0
         for segment in segments:
-            dots = segment.count(" · ")
+            dots = _inci_separator_count(segment)
             if dots > best_dots:
                 best, best_dots = segment, dots
         if best is not None and best_dots >= _MIN_INCI_DOTS:
-            return best.strip(" ·") or None
+            best = _INCI_LABEL.sub("", best)
+            return best.strip(" ·•") or None
         return None
     return None
 
