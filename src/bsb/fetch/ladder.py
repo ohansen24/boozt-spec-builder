@@ -173,24 +173,37 @@ class PlaywrightSession:
         self.limiter = limiter
         self.user_agent = user_agent
         self._pw = None
+        self._browser = None
+        self._context = None
+        self._page = None
+
+    def rotate_context(self) -> None:
+        """Discard cookies/session and start fresh on the next call — some
+        sites A/B-bucket search behavior per session (seen live: LF barcode
+        search works in some buckets and returns 'no search results' in
+        others)."""
+        if self._context is not None:
+            self._context.close()
         self._context = None
         self._page = None
 
     def _ensure_started(self, warmup_url: str) -> None:
         if self._context is not None:
             return
-        try:
-            from playwright.sync_api import sync_playwright
-        except ImportError as exc:  # pragma: no cover
-            raise FetchError("playwright not installed") from exc
-        self._pw = sync_playwright().start()
-        try:
-            browser = self._pw.chromium.launch(headless=True)
-        except Exception as exc:  # pragma: no cover - browser binary missing
-            raise FetchError(
-                "Chromium not installed for Playwright — run: .venv/bin/playwright install chromium"
-            ) from exc
-        self._context = browser.new_context(user_agent=self.user_agent, locale="en-US")
+        if self._pw is None:
+            try:
+                from playwright.sync_api import sync_playwright
+            except ImportError as exc:  # pragma: no cover
+                raise FetchError("playwright not installed") from exc
+            self._pw = sync_playwright().start()
+            try:
+                self._browser = self._pw.chromium.launch(headless=True)
+            except Exception as exc:  # pragma: no cover - browser binary missing
+                raise FetchError(
+                    "Chromium not installed for Playwright — run: "
+                    ".venv/bin/playwright install chromium"
+                ) from exc
+        self._context = self._browser.new_context(user_agent=self.user_agent, locale="en-US")
         self._page = self._context.new_page()
         self.limiter.wait(urlsplit(warmup_url).netloc)
         self._page.goto(warmup_url, wait_until="domcontentloaded")
@@ -253,6 +266,8 @@ class PlaywrightSession:
 
     def close(self) -> None:  # pragma: no cover
         if self._context is not None:
-            self._context.browser.close()
+            self._context.close()
+        if self._browser is not None:
+            self._browser.close()
         if self._pw is not None:
             self._pw.stop()

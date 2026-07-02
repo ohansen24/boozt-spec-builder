@@ -73,14 +73,28 @@ class LookfantasticValidator:
 
     def find_product(self, ean12: str) -> LfProduct | None:
         """Search LF by barcode (rendered), then parse the first product page
-        that actually contains that barcode in its variationData."""
-        search_url = f"{LF_BASE}/search/?q={quote_plus(ean12)}"
-        try:
-            rendered = self.playwright.render(search_url)
-        except FetchError:
-            return None
+        that actually contains that barcode in its variationData.
 
-        for candidate in self._product_links(rendered.text)[:2]:
+        LF A/B-buckets its search per session: some buckets match barcodes,
+        others answer "no search results" for the same query. On an empty
+        result, rotate to a fresh browser context (new bucket) and retry —
+        a successful page overwrites any cached empty one."""
+        search_url = f"{LF_BASE}/search/?q={quote_plus(ean12)}"
+        links: list[str] = []
+        for attempt in range(3):
+            try:
+                rendered = self.playwright.render(search_url, use_cache=attempt == 0)
+            except FetchError:
+                return None
+            links = self._product_links(rendered.text)
+            if links:
+                break
+            if "no search results" in rendered.text.lower():
+                self.playwright.rotate_context()
+                continue
+            break
+
+        for candidate in links[:2]:
             try:
                 page = self.fetcher.get(candidate)
             except FetchError:

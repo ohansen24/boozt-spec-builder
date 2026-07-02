@@ -49,6 +49,11 @@ def main() -> None:
 @click.option("--bases", "bases_csv", default=None, help="Comma-separated base-name filter (pilot)")
 @click.option("--show-variants", is_flag=True, help="Print per-master variant tables")
 @click.option("--sample-provenance", default=0, type=int, help="Print N random provenance rows")
+@click.option(
+    "--allow-size-anomalies",
+    is_flag=True,
+    help="Do not stop on site-vs-ODM size mismatches; ship yellow with notes (kit 6.5)",
+)
 def run(
     odm_path: str,
     template_path: str,
@@ -61,6 +66,7 @@ def run(
     bases_csv: str | None,
     show_variants: bool,
     sample_provenance: int,
+    allow_size_anomalies: bool,
 ) -> None:
     """Fill a Boozt template from an ODM (--resolve adds brand-site data and
     the validator pass; anomalies stop the run before emit)."""
@@ -115,6 +121,7 @@ def run(
         do_validate,
         show_variants,
         sample_provenance,
+        allow_size_anomalies,
     )
 
 
@@ -132,6 +139,7 @@ def _run_resolved(
     do_validate,
     show_variants,
     sample_provenance,
+    allow_size_anomalies,
 ) -> None:
     import random
 
@@ -220,10 +228,19 @@ def _run_resolved(
                 cache_lf_hit(ean_cache, row.gtin13, lf_product, row.ean12)
 
         if size_anomalies:
-            click.echo("\n!! SIZE ANOMALIES vs ODM hints — stopping before emit:")
+            click.echo(
+                "\n!! SIZE ANOMALIES vs ODM hints"
+                + (
+                    " (allowed; shipping yellow):"
+                    if allow_size_anomalies
+                    else " — stopping before emit:"
+                )
+            )
             for a in size_anomalies:
                 click.echo(f"  {a}")
-            raise SystemExit(2)
+            if not allow_size_anomalies:
+                raise SystemExit(2)
+            run_meta["size anomalies (accepted)"] = " | ".join(size_anomalies)
 
         conflict_rate = (conflict_cells / compared_cells) if compared_cells else 0.0
         click.echo(

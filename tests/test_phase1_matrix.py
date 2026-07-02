@@ -296,7 +296,6 @@ def test_validator_only_value_ships_yellow():
     assert fv.value == "Gobi"
     assert fv.primary.url == "https://lf/p/x"
 
-
     def test_semi_delisted_shade_uses_own_pdp(self):
         """In the variants map but missing from the purchasable vals (live
         case: the Orgasm quad) — resolved via own PDP, warned, not blocked."""

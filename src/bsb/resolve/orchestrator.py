@@ -149,8 +149,7 @@ def resolve_order(
                     entry.ok = True
                     entry.master = own
                     result.swatch_warnings.append(
-                        f"{detail}: {kind} — resolved via own PDP, "
-                        f"self-anchored ({own.pdp_url})"
+                        f"{detail}: {kind} — resolved via own PDP, self-anchored ({own.pdp_url})"
                     )
                     progress(f"  ~ {row.ean12}: {kind}, own PDP self-anchors")
                 else:
