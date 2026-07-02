@@ -174,19 +174,27 @@ class NarsAdapter:
 
         # dwvar color val ids: join swatch-list shade names against the color
         # attribute's vals (val id == gtin13 on some masters, an internal
-        # shade code on others)
+        # shade code on others). A variant can sit in the variants map yet be
+        # MISSING from the purchasable vals (semi-delisted, e.g. the Orgasm
+        # quad) — such gtins stay unmapped and resolve via their own PDP;
+        # guessing a val would only fetch the master default.
         val_id_by_shade: dict[str, str] = {}
+        val_ids: set[str] = set()
         for attribute in (state.get("variations") or {}).get("attributes") or []:
             if attribute.get("id") != "color":
                 continue
             for val in attribute.get("vals") or []:
                 shade_text = str(val.get("val") or "").casefold().strip()
-                if shade_text and val.get("id"):
-                    val_id_by_shade[shade_text] = str(val["id"])
-        color_val_by_gtin = {
-            gtin: val_id_by_shade.get(shade.casefold().strip(), gtin)
-            for gtin, shade in shades.items()
-        }
+                if val.get("id"):
+                    val_ids.add(str(val["id"]))
+                    if shade_text:
+                        val_id_by_shade[shade_text] = str(val["id"])
+        color_val_by_gtin: dict[str, str] = {}
+        for gtin, shade in shades.items():
+            if gtin in val_ids:
+                color_val_by_gtin[gtin] = gtin
+            elif shade.casefold().strip() in val_id_by_shade:
+                color_val_by_gtin[gtin] = val_id_by_shade[shade.casefold().strip()]
 
         selected_id = str(state.get("ID") or gtin13)
         size_match = _SIZE_DIV.search(fetch.text)

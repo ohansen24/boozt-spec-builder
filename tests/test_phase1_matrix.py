@@ -158,6 +158,7 @@ def _master(shades: dict[str, str]) -> MasterResult:
         selected_id="0194251140407",
         selected_shade="ORGASM – 777",
         shade_by_gtin=shades,
+        color_val_by_gtin={g: g for g in shades},
         size_text="4.8g",
     )
 
@@ -294,3 +295,20 @@ def test_validator_only_value_ships_yellow():
     assert fv.status == "SINGLE_SOURCE"
     assert fv.value == "Gobi"
     assert fv.primary.url == "https://lf/p/x"
+
+
+    def test_semi_delisted_shade_uses_own_pdp(self):
+        """In the variants map but missing from the purchasable vals (live
+        case: the Orgasm quad) — resolved via own PDP, warned, not blocked."""
+        master = _master({"0194251140407": "ORGASM – 777"})
+        master.shade_by_gtin["0194251026404"] = "Orgasm"  # listed…
+        # …but absent from color_val_by_gtin (no purchasable val)
+        own = _master({})
+        own.selected_id = "0194251026404"
+        own.selected_shade = "Orgasm"
+        odm = _odm([_row("194251026404", "Eyeshadow Quad - Orgasm")])
+        result = resolve_order(odm, FakeAdapter(master, own_pdp={"0194251026404": own}))
+        entry = result.by_ean["194251026404"]
+        assert entry.ok
+        assert result.swatch_warnings and "not purchasable" in result.swatch_warnings[0]
+        assert not result.blocking_anomalies

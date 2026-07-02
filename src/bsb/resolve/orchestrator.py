@@ -120,11 +120,17 @@ def resolve_order(
                 continue
 
             entry.in_swatch_list = row.gtin13 in master.shade_by_gtin
-            if not entry.in_swatch_list:
-                # delisted shade: the master's public swatch list omits it, but
-                # its own PDP may still exist and self-anchor the GTIN (seen
-                # live with LRF "Gobi"). Product-Variation would only return
-                # the master default, so don't bother calling it.
+            if row.gtin13 not in master.color_val_by_gtin:
+                # delisted (absent from the swatch map — LRF "Gobi") or
+                # semi-delisted (in the map but missing from the purchasable
+                # vals — the Orgasm quad): Product-Variation would only return
+                # the master default, but the shade's own PDP may still exist
+                # and self-anchor the GTIN.
+                kind = (
+                    "listed but not purchasable (no color value)"
+                    if entry.in_swatch_list
+                    else f"not in {master.master_id} swatch list (delisted?)"
+                )
                 detail = f"{row.ean12} ({base} - {row.shade or '?'})"
                 try:
                     own = adapter.discover_master(row.gtin13)
@@ -137,21 +143,21 @@ def resolve_order(
                         # INCI applies — same master id, one list per product
                         own.inci_text = master.inci_text
                         own.inci_selected_gtin = master.inci_selected_gtin
+                    if own.selected_shade is None:
+                        own.selected_shade = master.shade_by_gtin.get(row.gtin13)
                     entry.variant = adapter.variant_from_pdp(own)
                     entry.ok = True
                     entry.master = own
                     result.swatch_warnings.append(
-                        f"{detail}: not in {master.master_id} swatch list (delisted?) — "
-                        f"resolved via own PDP, self-anchored ({own.pdp_url})"
+                        f"{detail}: {kind} — resolved via own PDP, "
+                        f"self-anchored ({own.pdp_url})"
                     )
-                    progress(f"  ~ {row.ean12}: delisted from swatch list, own PDP self-anchors")
+                    progress(f"  ~ {row.ean12}: {kind}, own PDP self-anchors")
                 else:
                     reason = (
                         f"own PDP anchors {own.selected_id}" if own is not None else fallback_error
                     )
-                    entry.error = (
-                        f"not in {master.master_id} swatch list; own-PDP fallback: {reason}"
-                    )
+                    entry.error = f"{kind}; own-PDP fallback: {reason}"
                     result.missing_shades.append(f"{detail}: {entry.error}")
                 result.by_ean[row.ean12] = entry
                 continue
