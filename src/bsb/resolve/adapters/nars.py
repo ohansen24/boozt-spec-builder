@@ -43,12 +43,18 @@ class MasterResult(BaseModel):
     product_name: str
     pdp_url: str  # final canonical URL (provenance)
     discovered_via_gtin: str
-    shade_by_gtin: dict[str, str] = Field(default_factory=dict)
+    selected_id: str  # product-state "ID": the variant the PDP had selected
+    selected_shade: str | None = None
+    shade_by_gtin: dict[str, str] = Field(default_factory=dict)  # empty = simple product
     size_text: str | None = None
     inci_text: str | None = None
     inci_selected_gtin: str | None = None  # which shade the PDP had selected
     fetched_at: datetime | None = None
     from_cache: bool = False
+
+    @property
+    def is_simple_product(self) -> bool:
+        return not self.shade_by_gtin
 
 
 class VariantResult(BaseModel):
@@ -142,19 +148,64 @@ class NarsAdapter:
             if shade:
                 shades[variant["id"]] = shade
 
+        selected_id = str(state.get("ID") or gtin13)
         size_match = _SIZE_DIV.search(fetch.text)
+        selected_shade = shades.get(selected_id)
+        if selected_shade is None:
+            selected_shade = jsonld_selected_shade(parse_jsonld_products(fetch.text))
         return MasterResult(
             master_id=str(master_id),
             product_name=str(state.get("name") or ""),
             pdp_url=fetch.final_url,
             discovered_via_gtin=gtin13,
+            selected_id=selected_id,
+            selected_shade=selected_shade,
             shade_by_gtin=shades,
             size_text=size_match.group(1).strip() if size_match else None,
             inci_text=extract_inci(fetch.text),
-            inci_selected_gtin=str(state.get("ID") or gtin13),
+            inci_selected_gtin=selected_id,
             fetched_at=fetch.fetched_at,
             from_cache=fetch.from_cache,
         )
+
+    def variant_from_pdp(self, master: MasterResult) -> VariantResult:
+        """Simple products (no color swatch list): the PDP itself is the
+        GTIN-anchored evidence — its product-state ID is the variant id."""
+        gtin13 = master.selected_id
+        ean12 = gtin13[1:] if len(gtin13) == 13 and gtin13.startswith("0") else gtin13
+        result = VariantResult(
+            gtin13=gtin13,
+            ean12=ean12,
+            ok=True,
+            master_id=master.master_id,
+            url=master.pdp_url,
+            product_name=master.product_name,
+            shade=master.selected_shade,
+            size_text=master.size_text,
+            returned_id=gtin13,
+            snippet=f'"ID":"{gtin13}" (PDP product-state, simple product)',
+            fetched_at=master.fetched_at,
+            from_cache=master.from_cache,
+        )
+        self.ean_cache.write(
+            gtin13,
+            {
+                "gtin13": gtin13,
+                "ean12": ean12,
+                "master_id": master.master_id,
+                "product_name": master.product_name,
+                "shade": master.selected_shade,
+                "size_text": master.size_text,
+                "source_url": master.pdp_url,
+                "pdp_url": master.pdp_url,
+                "method": "dom",
+                "via": "httpx",
+                "fetched_at": (
+                    master.fetched_at.isoformat(timespec="seconds") if master.fetched_at else None
+                ),
+            },
+        )
+        return result
 
     def resolve_variant(self, master: MasterResult, gtin13: str) -> VariantResult:
         url = self._controller(

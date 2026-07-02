@@ -16,6 +16,16 @@ nars:
   # is NARS's multi-use color stick.
   product_name_categories:
     multiple: Makeup
+  # Site styling -> sheet form. PROVISIONAL (run-report note until confirmed):
+  # "ORGASM – 777" -> "Orgasm"; verbatim site string stays in provenance.
+  # Guide 1.1.5's example style is "Rose Sky". Formatting alone never
+  # downgrades a cell — shade identity follows the validation matrix.
+  shade_format:
+    strip_numeric_suffix: true # drop trailing " – NNN" site suffix
+    title_case: true # site publishes ALL CAPS
+    pending_note: NARS shade format pending confirmation (provisional title-case, numeric suffix stripped)
+  name_format:
+    title_case: true # site publishes ALL CAPS ("POWDER BLUSH" -> "Powder Blush")
 
 svr:
   display_name: SVR

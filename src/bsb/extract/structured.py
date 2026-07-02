@@ -13,18 +13,17 @@ SELECTED variant id ("ID"), "masterID", "name", the "variants" map keyed by
 import json
 import re
 
-_JSONLD_RE = re.compile(r'<script type="application/ld\+json">(.*?)</script>', re.DOTALL)
+_JSONLD_RE = re.compile(r'<script type="application/ld\+json"[^>]*>(.*?)</script>', re.DOTALL)
 _STATE_ANCHORS = ("var productCache =", "pdpdata =")
 
 
-def extract_json_object(text: str, anchor: str) -> dict | None:
-    """Parse the JSON object that starts at the first '{' after `anchor`,
-    using a string-aware brace scan (the object may contain braces inside
-    string values)."""
+def _scan_balanced(text: str, anchor: str, open_char: str, close_char: str) -> str | None:
+    """The balanced {...} or [...] JSON literal after `anchor`, via a
+    string-aware bracket scan (values may contain brackets inside strings)."""
     i = text.find(anchor)
     if i == -1:
         return None
-    start = text.find("{", i + len(anchor))
+    start = text.find(open_char, i + len(anchor))
     if start == -1:
         return None
 
@@ -43,16 +42,33 @@ def extract_json_object(text: str, anchor: str) -> dict | None:
             continue
         if ch == '"':
             in_string = True
-        elif ch == "{":
+        elif ch == open_char:
             depth += 1
-        elif ch == "}":
+        elif ch == close_char:
             depth -= 1
             if depth == 0:
-                try:
-                    return json.loads(text[start : pos + 1])
-                except json.JSONDecodeError:
-                    return None
+                return text[start : pos + 1]
     return None
+
+
+def extract_json_object(text: str, anchor: str) -> dict | None:
+    literal = _scan_balanced(text, anchor, "{", "}")
+    if literal is None:
+        return None
+    try:
+        return json.loads(literal)
+    except json.JSONDecodeError:
+        return None
+
+
+def extract_json_array(text: str, anchor: str) -> list | None:
+    literal = _scan_balanced(text, anchor, "[", "]")
+    if literal is None:
+        return None
+    try:
+        return json.loads(literal)
+    except json.JSONDecodeError:
+        return None
 
 
 def parse_sfcc_product_state(html: str) -> dict | None:
@@ -65,7 +81,8 @@ def parse_sfcc_product_state(html: str) -> dict | None:
 
 
 def parse_jsonld_products(html: str) -> list[dict]:
-    """All JSON-LD Product nodes, flattening @graph containers."""
+    """All JSON-LD Product/ProductGroup nodes, flattening @graph containers
+    and descending into ProductGroup.hasVariant (Lookfantastic's shape)."""
     products = []
     for match in _JSONLD_RE.finditer(html):
         try:
@@ -74,8 +91,13 @@ def parse_jsonld_products(html: str) -> list[dict]:
             continue
         nodes = data if isinstance(data, list) else data.get("@graph", [data])
         for node in nodes:
-            if isinstance(node, dict) and node.get("@type") == "Product":
+            if not isinstance(node, dict):
+                continue
+            if node.get("@type") in ("Product", "ProductGroup"):
                 products.append(node)
+                for variant in node.get("hasVariant", []):
+                    if isinstance(variant, dict) and variant.get("@type") == "Product":
+                        products.append(variant)
     return products
 
 

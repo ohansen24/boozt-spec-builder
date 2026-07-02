@@ -64,16 +64,42 @@ def normalize_category(value: object, rules: dict) -> str | None:
     return None
 
 
-def normalize_color_name(value: object) -> str | None:
-    """The brand's exact shade string, verbatim, trimmed. No translation."""
+_NUMERIC_SUFFIX = re.compile(r"\s+[–—-]\s+\d+\s*$")  # noqa: RUF001 - site uses en dash
+
+
+def _brand_title_case(text: str) -> str:
+    """Title-case a site ALL-CAPS string, keeping digits/punctuation intact.
+    Only applied when the brand config asks for it."""
+    return re.sub(r"[A-Za-zÀ-ÿ']+", lambda m: m.group(0).capitalize(), text)
+
+
+def normalize_color_name(value: object, brand_cfg: dict | None = None) -> str | None:
+    """The brand's exact shade string, verbatim, trimmed — optionally passed
+    through the brand's shade_format config (e.g. NARS site styling
+    "ORGASM - 777" (site uses an en dash) -> "Orgasm"; provisional). The
+    verbatim site string always stays in provenance; formatting alone never
+    changes a cell's status."""
     if value is None:
         return None
     cleaned = clean_ws(str(value))
+    if not cleaned:
+        return None
+    fmt = (brand_cfg or {}).get("shade_format") or {}
+    if fmt.get("strip_numeric_suffix"):
+        cleaned = _NUMERIC_SUFFIX.sub("", cleaned).strip()
+    if fmt.get("title_case"):
+        cleaned = _brand_title_case(cleaned)
     return cleaned or None
 
 
-def normalize_style_name(value: object) -> str | None:
+def normalize_style_name(value: object, brand_cfg: dict | None = None) -> str | None:
+    """Master product name; optionally title-cased per brand name_format
+    (NARS publishes ALL CAPS)."""
     if value is None:
         return None
     cleaned = clean_ws(str(value))
+    if not cleaned:
+        return None
+    if ((brand_cfg or {}).get("name_format") or {}).get("title_case"):
+        cleaned = _brand_title_case(cleaned)
     return cleaned or None

@@ -201,6 +201,29 @@ class PlaywrightSession:
             except Exception:
                 continue
 
+    def render(self, url: str, *, settle_ms: int = 4000, use_cache: bool = True) -> CachedFetch:
+        """Full-page render for JS-built pages (e.g. retailer search grids):
+        goto + settle, return the rendered DOM. Cached like any fetch."""
+        cache_key = f"render:{url}"
+        if use_cache:
+            cached = self.cache.get(cache_key)
+            if cached is not None:
+                return cached
+        self._ensure_started(url)
+        self.limiter.wait(urlsplit(url).netloc)
+        self._page.goto(url, wait_until="domcontentloaded")
+        self._page.wait_for_timeout(settle_ms)
+        fetch = CachedFetch(
+            url=cache_key,
+            final_url=self._page.url,
+            status=200,
+            content_type="text/html;rendered",
+            text=self._page.content(),
+            fetched_at=datetime.now(UTC),
+            via="playwright",
+        )
+        return self.cache.put(fetch)
+
     def get(
         self, url: str, *, referer: str, ajax: bool = True, use_cache: bool = True
     ) -> CachedFetch:

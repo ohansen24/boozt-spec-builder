@@ -162,3 +162,182 @@ def build_records(
     return [
         build_record(row, brand_key, brands, rules, odm_path, fetched_at) for row in odm_result.rows
     ]
+
+
+def apply_resolution(
+    record: ProductRecord,
+    row: OdmRow,
+    resolved,  # ResolvedEan | None
+    brand_cfg: dict,
+    rules: dict,
+    lf_product=None,  # LfProduct | None
+    weak_inci=None,  # WeakInci | None
+) -> list[str]:
+    """Enrich a Phase 0 record with resolved brand-site data and the
+    validator matrix (kit 6.5). Returns anomaly strings (site size vs ODM
+    hint mismatches) for the run gate."""
+    from bsb.categorize.rules import categorize, color_code_for
+    from bsb.normalize.boozt import normalize_color_name, normalize_size, normalize_style_name
+    from bsb.validate.guide import check_name_length
+    from bsb.validate.matrix import combine_exact, compare_inci, confirm_name, odm_name_check
+
+    anomalies: list[str] = []
+
+    if resolved is None or not resolved.ok or resolved.variant is None:
+        reason = (resolved.error if resolved else None) or "not resolved"
+        for field in ("style_name", "color_name", "size", "ingredients"):
+            fv: FieldValue = getattr(record, field)
+            fv.notes = f"brand site: {reason}"
+        return anomalies
+
+    variant = resolved.variant
+    master = resolved.master
+    method = "sfcc_api" if variant.url != master.pdp_url else "dom"
+    nars_ref = SourceRef(
+        url=variant.url,
+        method=method,
+        fetched_at=variant.fetched_at or datetime.now(UTC),
+        snippet=variant.snippet,
+    )
+
+    lf_variant = None
+    lf_ref = None
+    if lf_product is not None:
+        lf_variant = lf_product.by_barcode.get(row.ean12)
+        if lf_variant is not None:
+            lf_ref = SourceRef(
+                url=lf_product.url,
+                method="dom",
+                fetched_at=lf_product.fetched_at or datetime.now(UTC),
+                snippet=f'"barcode":"{row.ean12}" … shade {lf_variant.shade!r}',
+            )
+
+    # --- style_name: brand-authoritative, retailer confirms above threshold
+    site_name = normalize_style_name(variant.product_name, brand_cfg)
+    known_shades = list(lf_product.by_barcode.values()) if lf_product else []
+    record.style_name = confirm_name(
+        site_name,
+        nars_ref,
+        lf_product.product_name if lf_variant else None,
+        lf_ref,
+        brand=str(brand_cfg.get("display_name", "")),
+        known_shades=[v.shade for v in known_shades if v.shade],
+    )
+    if site_name and not check_name_length(site_name, rules):
+        record.style_name.notes += "; EXCEEDS 60-char guide limit — shorten manually"
+        record.style_name.status = "SINGLE_SOURCE"
+    hint_note = odm_name_check(site_name or "", variant.shade, str(row.hints.get("name") or ""))
+    if hint_note:
+        record.style_name.notes += f"; {hint_note}"
+
+    # --- color_name: exact match across families (normalized per brand config)
+    site_shade = normalize_color_name(variant.shade, brand_cfg)
+    lf_shade = normalize_color_name(lf_variant.shade, brand_cfg) if lf_variant else None
+    if variant.shade is None:
+        record.color_name = FieldValue(
+            status="NOT_FOUND",
+            primary=nars_ref,
+            notes="no shade on brand site — no-color convention pending (open question 3)",
+        )
+    else:
+        record.color_name = combine_exact("shade", site_shade, nars_ref, lf_shade, lf_ref)
+
+    # --- size: exact match, then ODM tertiary check
+    site_size = normalize_size(variant.size_text)
+    lf_size = normalize_size(lf_product.size_text) if lf_variant and lf_product.size_text else None
+    record.size = combine_exact("size", site_size, nars_ref, lf_size, lf_ref)
+    odm_size = normalize_size(row.hints.get("size"), row.hints.get("size_unit"))
+    if odm_size and record.size.value and odm_size != record.size.value:
+        anomalies.append(
+            f"{row.ean12} ({row.base_name}): site size {record.size.value!r} "
+            f"!= ODM hint {odm_size!r}"
+        )
+        if record.size.status == "VERIFIED":
+            record.size.status = "SINGLE_SOURCE"
+        record.size.notes += f"; ODM hint disagrees ({odm_size}) — downgraded per kit 6.5"
+
+    # --- ingredients: brand INCI (comma-space separators), weak support notes
+    if master.inci_text:
+        inci_boozt = master.inci_text.replace(" · ", ", ").replace("·", ",").strip(" ,")
+        notes = [
+            f"brand INCI captured with shade {master.inci_selected_gtin} selected; "
+            "one list per product (may-contain covers all shades)"
+        ]
+        if weak_inci and weak_inci.inci_text:
+            verdict, diff = compare_inci(master.inci_text, weak_inci.inci_text)
+            if verdict == "identical":
+                notes.append(
+                    f"INCIDecoder weak support: base list token-identical ({weak_inci.url})"
+                )
+            elif verdict == "may_contain_diff":
+                notes.append(
+                    "INCIDecoder weak support: may-contain block differs "
+                    f"[{diff}] ({weak_inci.url})"
+                )
+            else:
+                notes.append(
+                    f"INCIDecoder weak support DISAGREES on base list [{diff}] ({weak_inci.url}) "
+                    "— weak source, note only"
+                )
+        record.ingredients = FieldValue(
+            value=inci_boozt,
+            status="SINGLE_SOURCE",
+            primary=SourceRef(
+                url=master.pdp_url,
+                method="dom",
+                fetched_at=master.fetched_at or datetime.now(UTC),
+                snippet=master.inci_text[:160],
+            ),
+            notes="; ".join(notes),
+        )
+    else:
+        record.ingredients = FieldValue(
+            status="NOT_FOUND", primary=nars_ref, notes="no INGREDIENTS accordion on brand PDP"
+        )
+
+    # --- category: brand's own name is the taxonomy signal, ODM only fallback
+    decision = categorize(site_name or row.base_name, rules, brand_cfg)
+    basis = "site name" if site_name else "ODM name"
+    if decision.category is None and site_name:
+        decision = categorize(row.base_name, rules, brand_cfg)
+        basis = "ODM name (site name matched no rule)"
+    if decision.category:
+        record.category = FieldValue(
+            value=decision.category,
+            status="SINGLE_SOURCE",
+            primary=nars_ref,
+            notes=f"rule {decision.rule} on {basis}; enum-validated",
+        )
+    else:
+        record.category = FieldValue(
+            status="NOT_FOUND", notes="no categorization rule matched — fail closed, never guessed"
+        )
+
+    # --- color_code + flammable follow the final category
+    cc = color_code_for(decision.category, site_shade or row.shade, rules)
+    if cc.code is not None:
+        notes_cc = f"rule {cc.rule}"
+        if cc.pending_confirmation:
+            notes_cc += " — pending confirmation (open question 2)"
+        record.color_code = FieldValue(value=str(cc.code), status="SINGLE_SOURCE", notes=notes_cc)
+    else:
+        record.color_code = FieldValue(
+            status="NOT_FOUND", notes="no color-code rule matched — fail closed"
+        )
+
+    if decision.category in rules["dg_trigger_categories"]:
+        record.flammable = FieldValue(
+            status="NOT_FOUND",
+            notes=f"DG-trigger category {decision.category!r} — requires SDS review, "
+            "never defaulted",
+        )
+    elif decision.category:
+        record.flammable = FieldValue(
+            value="No",
+            status="SINGLE_SOURCE",
+            notes=f"default for non-DG category {decision.category!r}",
+        )
+    else:
+        record.flammable = FieldValue(status="NOT_FOUND", notes="category undecided")
+
+    return anomalies
