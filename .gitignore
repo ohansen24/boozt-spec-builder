@@ -220,3 +220,4 @@ __marimo__/
 # Project-specific
 data/inbox/
 cache/
+data/out/
