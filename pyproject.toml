@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "boozt-spec-builder"
+version = "0.1.0"
+description = "Turns a Buying Labs ODM plus a blank Boozt data template into a filled, validated Boozt product data sheet with per-field provenance."
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.7",
+    "click>=8.1",
+    "openpyxl>=3.1",
+    "pandas>=2.2",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+bsb = "bsb.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.5",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bsb"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
