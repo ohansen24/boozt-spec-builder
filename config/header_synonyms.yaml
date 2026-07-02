@@ -1,0 +1,54 @@
+# Canonical field -> observed header texts (build kit section 6.2 seed table).
+# Matching is case-insensitive on a normalized form: NBSP -> space, strip
+# parentheticals, collapse whitespace. Add new observed spellings here, never
+# address columns by letter.
+ean:
+  - EAN Code
+style_name:
+  - Style/Display name
+style_number:
+  - Style number
+brand:
+  - Brand
+color_name:
+  - Color Name
+size:
+  - Size
+length:
+  - Length (enter "No Length" if not applicable)
+variation:
+  - Variation (enter "No Variant" if not applicable)
+gender:
+  - Gender (F = Female, M = Male, U = Unisex)
+category:
+  - Boozt Product Category
+color_code:
+  - Boozt Color code
+ingredients:
+  - Material composition
+flammable:
+  - Flammable (Yes/No)
+country_iso:
+  - Country ISO code
+customs_se:
+  - Customs code/Tariff Code (Sweden)
+un_code:
+  - UN code
+psn:
+  - Proper Shipping Name
+hazard_class:
+  - Hazard Class
+packing_group:
+  - Packing Group
+ems:
+  - EmS code
+tunnel:
+  - Tunnel Restriction Code
+marine:
+  - Marine Pollutant
+flash_point:
+  - Flash Point Transportation
+expiry_on_pack:
+  - Expiry date on packaging
+purchase_price:
+  - Original Purchase Price
