@@ -56,9 +56,13 @@ def run(odm_path: str, template_path: str, brand_key: str, out_path: str, config
         "brand": brand_key,
         "guide version": rules["guide_version"],
         "phase": "0 (pure local — no web sources; web-dependent fields are NOT_FOUND)",
+        "ean length profile": ", ".join(
+            f"{length}-digit: {count}" for length, count in sorted(odm.length_profile.items())
+        ),
         "_ingest_issues": odm.issues,
     }
     summary = write_output(template_path, out_path, records, synonyms, run_meta)
+    click.echo("EAN length profile: " + run_meta["ean length profile"])
     _print_summary(summary)
 
 

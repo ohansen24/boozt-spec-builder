@@ -95,12 +95,18 @@ def build_record(
             status="NOT_FOUND", notes="no color-code rule matched — fail closed"
         )
 
-    if decision.category:
+    if decision.category in rules["dg_trigger_categories"]:
+        # DG rows are always red until a human confirms against the SDS (6.8)
+        record.flammable = FieldValue(
+            status="NOT_FOUND",
+            notes=f"DG-trigger category {decision.category!r} — requires SDS "
+            "review (Phase 1); never defaulted",
+        )
+    elif decision.category:
         record.flammable = FieldValue(
             value="No",
             status="SINGLE_SOURCE",
-            notes=f"default for non-DG category {decision.category!r} "
-            "(this order contains no DG categories)",
+            notes=f"default for non-DG category {decision.category!r}",
         )
     else:
         record.flammable = FieldValue(status="NOT_FOUND", notes="category undecided")

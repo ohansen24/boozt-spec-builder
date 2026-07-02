@@ -5,7 +5,7 @@ Each check returns True when the value is acceptable as-is for submission.
 
 import re
 
-from bsb.ingest.odm import gs1_check_digit_ok
+from bsb.ingest.odm import check_ean_submission_form, gs1_check_digit_ok
 
 __all__ = [
     "check_category",
@@ -37,16 +37,6 @@ def check_size_format(value: str, rules: dict) -> bool:
 
 def check_name_length(value: str, rules: dict) -> bool:
     return len(value) <= rules["name_max_chars"]
-
-
-def check_ean_submission_form(ean: str) -> bool:
-    """Boozt: an EAN-13 must not start with 0 — 12-digit UPCs are submitted
-    as-is, never zero-padded to 13."""
-    if not ean.isdigit():
-        return False
-    if len(ean) == 13 and ean.startswith("0"):
-        return False
-    return len(ean) in (8, 12, 13)
 
 
 _PG_FORMS = {"2": "II", "II": "II", "3": "III", "III": "III"}

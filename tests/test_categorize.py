@@ -94,3 +94,25 @@ def test_color_code_shade_lexicon(rules):
 def test_color_code_fails_closed(rules):
     decision = color_code_for("Makeup", "Rebellion", rules)
     assert decision.code is None
+
+
+def test_dg_trigger_categories_never_default_flammable(rules, brands):
+    """Review finding B: DG rows stay red until a human confirms (kit 6.8)."""
+    from datetime import UTC, datetime
+
+    from bsb.ingest.odm import OdmRow
+    from bsb.pipeline import build_record
+
+    row = OdmRow(
+        row_number=8,
+        ean12="194251026404",
+        gtin13="0194251026404",
+        base_name="Nail Lacquer",
+        shade="Big Apple Red",
+        hints={"coo": "US", "price": 9.9},
+    )
+    record = build_record(row, "nars", brands, rules, "odm.xlsx", datetime.now(UTC))
+    assert record.category.value == "Nail polish"
+    assert record.flammable.value is None
+    assert record.flammable.status == "NOT_FOUND"
+    assert "DG-trigger" in record.flammable.notes

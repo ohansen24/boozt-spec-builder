@@ -155,6 +155,16 @@ no_color_aliases:
   - NO COLOUR
   - NO SHADE
 
+# Dangerous goods triggers (build kit 6.8): rows in these categories always
+# stay red until a human confirms against the SDS — the flammable="No"
+# default must never apply to them.
+dg_trigger_categories:
+  - Perfumes
+  - Perfume set
+  - Nail polish
+  - Deodorants
+  - Home & Spa
+
 # Dangerous goods: packing group vs flash point (guide table; Phase 1 module,
 # validation function tested now). Temperatures in Celsius.
 pg_flash_point:

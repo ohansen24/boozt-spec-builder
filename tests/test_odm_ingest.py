@@ -136,3 +136,50 @@ def test_find_header_row_requires_all_keys(tmp_path):
     path = tmp_path / "odm.xlsx"
     wb.save(path)
     assert find_header_row(wb.active) == 2
+
+
+def test_zero_padded_ean13_flagged(tmp_path):
+    """Review finding A: '0194251026404' passes GS1 mod-10 but is not a valid
+    Boozt submission form — must surface as an ingest issue."""
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["Barcode", "Name", "QTY"])
+    ws.append(["0194251026404", "Eyeshadow Quad - Orgasm", 1])
+    path = tmp_path / "odm.xlsx"
+    wb.save(path)
+
+    result = parse_odm(path)
+    assert any("not in a valid submission form" in i for i in result.issues)
+
+
+def test_numeric_cell_dropping_leading_zero_flagged(tmp_path):
+    """Review finding A: Excel storing UPC 036000291452 as a number yields an
+    11-digit code whose GS1 check still passes — the length must be flagged."""
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["Barcode", "Name", "QTY"])
+    ws.append([36000291452, "Test Product - Shade", 1])  # numeric cell, zero lost
+    path = tmp_path / "odm.xlsx"
+    wb.save(path)
+
+    result = parse_odm(path)
+    assert result.rows[0].ean12 == "36000291452"
+    assert any("11 digits" in i and "36000291452" in i for i in result.issues)
+
+
+def test_row_with_content_but_no_barcode_is_reported(tmp_path):
+    """Review finding C: an ordered item must never vanish silently."""
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["Barcode", "Name", "QTY"])
+    ws.append(["194251026404", "A - X", 1])
+    ws.append([None, "Concealer - Custard", 2])
+    ws.append([None, None, None])  # genuine padding row stays silent
+    path = tmp_path / "odm.xlsx"
+    wb.save(path)
+
+    result = parse_odm(path)
+    assert len(result.rows) == 1
+    content_issues = [i for i in result.issues if "no barcode but row has content" in i]
+    assert len(content_issues) == 1
+    assert "Concealer - Custard" in content_issues[0]

@@ -63,6 +63,17 @@ def gs1_check_digit_ok(code: str) -> bool:
     return (10 - total % 10) % 10 == digits[-1]
 
 
+def check_ean_submission_form(ean: str) -> bool:
+    """Boozt: an EAN-13 must not start with 0 — 12-digit UPCs are submitted
+    as-is, never zero-padded to 13. Also refuses stray lengths (e.g. the
+    11-digit code left when Excel stores a 0-leading UPC as a number)."""
+    if not ean.isdigit():
+        return False
+    if len(ean) == 13 and ean.startswith("0"):
+        return False
+    return len(ean) in (8, 12, 13)
+
+
 def barcode_as_text(value: object) -> str | None:
     """Coerce a barcode cell to its text form without losing leading zeros.
 
@@ -119,11 +130,21 @@ def parse_odm(path: str | Path) -> OdmParseResult:
     issues: list[str] = []
     seen: dict[str, int] = {}
 
+    content_cols = [col_by_header[h] for h in ("Name", "QTY") if h in col_by_header]
+
     for row in ws.iter_rows(min_row=header_row + 1):
         raw = row[barcode_col - 1].value
-        if raw in (None, ""):
-            continue  # skip blank/padding rows; real orders have no gaps
         row_number = row[0].row
+        if raw in (None, ""):
+            # blank padding rows are fine, but a row with content and no
+            # barcode is a vanishing ordered item — never drop it silently
+            content = [row[c - 1].value for c in content_cols]
+            if any(v not in (None, "") for v in content):
+                issues.append(
+                    f"row {row_number}: no barcode but row has content "
+                    f"({content[0]!r}) — row skipped, resolve in the ODM"
+                )
+            continue
         barcode = barcode_as_text(raw)
         if barcode is None or not barcode.isdigit():
             issues.append(f"row {row_number}: unreadable barcode {raw!r}")
@@ -131,6 +152,12 @@ def parse_odm(path: str | Path) -> OdmParseResult:
 
         if not gs1_check_digit_ok(barcode):
             issues.append(f"row {row_number}: GS1 check digit failed for {barcode}")
+        if not check_ean_submission_form(barcode):
+            issues.append(
+                f"row {row_number}: EAN {barcode} is not in a valid submission form "
+                f"({len(barcode)} digits; an EAN-13 must not start with 0, "
+                "12-digit UPCs are submitted as-is)"
+            )
         if barcode in seen:
             issues.append(
                 f"row {row_number}: duplicate barcode {barcode} (first at row {seen[barcode]})"
