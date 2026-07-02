@@ -1,0 +1,33 @@
+# Per-brand configuration (build kit section 11). style_prefix doubles as
+# foreign-prefix knowledge for the style-number lint (regression case 1).
+nars:
+  display_name: NARS
+  adapter: nars_sfcc
+  domains: [narscosmetics.eu]
+  gtin_form: "13"
+  style_prefix: null # OPEN QUESTION 1: NARS prefix unconfirmed -> column stays MANUAL
+  gender_default: F # per her finished work; ODM's blanket "unisex" is unreliable
+  country_iso: from_odm
+  # Curated brand product-type knowledge (the brand's own taxonomy), used by
+  # the categorizer where a generic keyword would fail closed. "The Multiple"
+  # is NARS's multi-use color stick.
+  product_name_categories:
+    multiple: Makeup
+
+svr:
+  display_name: SVR
+  style_prefix: SVR
+  gender_default: U
+  country_iso: from_odm
+
+aesop:
+  display_name: Aesop - Labs
+  style_prefix: AEOAES
+  gender_default: U
+  country_iso: from_odm
+
+olaplex:
+  display_name: Olaplex
+  style_prefix: LAP # style numbers deviate from {prefix}{ean12}; pattern unconfirmed
+  gender_default: U
+  country_iso: from_odm
