@@ -233,7 +233,7 @@ def apply_resolution(
     # --- color_name: exact match across families (normalized per brand config)
     site_shade = normalize_color_name(variant.shade, brand_cfg)
     lf_shade = normalize_color_name(lf_variant.shade, brand_cfg) if lf_variant else None
-    if variant.shade is None:
+    if site_shade is None and lf_shade is None:
         record.color_name = FieldValue(
             status="NOT_FOUND",
             primary=nars_ref,
