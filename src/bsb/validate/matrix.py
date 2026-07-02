@@ -41,6 +41,17 @@ def combine_exact(
     """Exact (casefolded) agreement for strong signals like shade and size."""
     notes = list(notes or [])
     if primary_value is None:
+        if validator_value is not None:
+            # kit 6.5: one family = yellow — the retailer is GTIN-anchored, so
+            # it may carry the field alone when the brand page lacks it
+            # (seen live: delisted LRF Gobi has a degraded brand PDP)
+            notes.append("brand site had no value; GTIN-anchored retailer is the single source")
+            return FieldValue(
+                value=validator_value,
+                status="SINGLE_SOURCE",
+                primary=validator_ref,
+                notes="; ".join(notes),
+            )
         return FieldValue(status="NOT_FOUND", notes="; ".join(notes) or f"{field_label} not found")
 
     if validator_value is None:

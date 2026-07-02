@@ -72,8 +72,8 @@ class TestMatrix:
         assert fv.value is None  # conflicted value never ships
         assert "url-a" in fv.notes and "url-b" in fv.notes
 
-    def test_missing_primary_not_found(self):
-        fv = combine_exact("size", None, None, "4.8 g", _ref("b"))
+    def test_missing_both_not_found(self):
+        fv = combine_exact("size", None, None, None, None)
         assert fv.status == "NOT_FOUND"
 
     def test_confirm_name_threshold(self):
@@ -163,12 +163,18 @@ def _master(shades: dict[str, str]) -> MasterResult:
 
 
 class FakeAdapter:
-    def __init__(self, master: MasterResult, reject: set[str] | None = None):
+    def __init__(
+        self,
+        master: MasterResult,
+        reject: set[str] | None = None,
+        own_pdp: dict[str, MasterResult] | None = None,
+    ):
         self.master = master
         self.reject = reject or set()
+        self.own_pdp = own_pdp or {}
 
     def discover_master(self, gtin13: str) -> MasterResult:
-        return self.master
+        return self.own_pdp.get(gtin13, self.master)
 
     def variant_from_pdp(self, master: MasterResult) -> VariantResult:
         return VariantResult(
@@ -181,7 +187,7 @@ class FakeAdapter:
             shade=master.selected_shade,
             product_name=master.product_name,
             size_text=master.size_text,
-            snippet=f'"ID":"{master.selected_id}" (PDP product-state, simple product)',
+            snippet=f'"ID":"{master.selected_id}" (PDP product-state self-anchor)',
         )
 
     def resolve_variant(self, master: MasterResult, gtin13: str) -> VariantResult:
@@ -258,5 +264,33 @@ class TestOrchestrator:
         result = resolve_order(odm, FakeAdapter(master))
         entry = result.by_ean["194251140407"]
         assert entry.ok
-        assert entry.variant.snippet.endswith("(PDP product-state, simple product)")
+        assert entry.variant.snippet.endswith("(PDP product-state self-anchor)")
         assert not result.blocking_anomalies
+
+    def test_delisted_shade_falls_back_to_own_pdp(self):
+        """A shade missing from the master swatch list but whose own PDP
+        self-anchors (live case: LRF Gobi) resolves with a warning, not a
+        blocking anomaly."""
+        master = _master({"0194251140407": "ORGASM – 777"})
+        gobi_pdp = _master({"0194251140407": "ORGASM – 777"})
+        gobi_pdp.selected_id = "0194251070421"
+        gobi_pdp.selected_shade = "GOBI"
+        gobi_pdp.pdp_url = "https://nars/gobi"
+        odm = _odm([_row("194251070421", "Light Reflecting Foundation - Gobi")])
+        result = resolve_order(odm, FakeAdapter(master, own_pdp={"0194251070421": gobi_pdp}))
+        entry = result.by_ean["194251070421"]
+        assert entry.ok
+        assert entry.variant.shade == "GOBI"
+        assert result.swatch_warnings and "delisted" in result.swatch_warnings[0]
+        assert not result.blocking_anomalies
+
+
+def test_validator_only_value_ships_yellow():
+    """Kit 6.5: one family = yellow. A GTIN-anchored retailer may carry a
+    field alone when the brand page lacks it (live case: delisted Gobi)."""
+    from bsb.validate.matrix import combine_exact
+
+    fv = combine_exact("shade", None, None, "Gobi", _ref("https://lf/p/x"))
+    assert fv.status == "SINGLE_SOURCE"
+    assert fv.value == "Gobi"
+    assert fv.primary.url == "https://lf/p/x"

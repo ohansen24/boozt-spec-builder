@@ -169,6 +169,10 @@ def _run_resolved(
             raise SystemExit(2)
         for failure in resolution.master_failures:
             click.echo(f"  (non-blocking) master not found: {failure}")
+        for warning in resolution.swatch_warnings:
+            click.echo(f"  (warning) {warning}")
+        if resolution.swatch_warnings:
+            run_meta["swatch warnings"] = " | ".join(resolution.swatch_warnings)
 
         lf_by_base: dict = {}
         inci_by_base: dict = {}

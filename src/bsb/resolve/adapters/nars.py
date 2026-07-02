@@ -7,10 +7,11 @@ Master-first flow:
    Blush" is "POWDER BLUSH" on-site). Parses the product-state object for the
    master pid and full swatch list, plus size and the INCI accordion.
 2. resolve_variant: Product-Variation?pid={master}&dwvar_{master}_color=
-   {gtin13}&Quantity=1&format=ajax per EAN. The dwvar color value IS the
-   variant's GTIN-13, so the call is keyed by barcode; the returned partial's
-   product-state "ID" must equal the requested gtin13 or the result is
-   rejected (GTIN-anchor rule, charter principle 2).
+   {colorValId}&Quantity=1&format=ajax per EAN. The color val id equals the
+   GTIN-13 on some masters and is an internal shade code on others (both
+   foundations) — mapped per variant via the master swatch data. The returned
+   partial's product-state "ID" must equal the requested gtin13 or the result
+   is rejected (GTIN-anchor rule, charter principle 2).
 
 Escalation: plain cookie-less httpx first; on a bot-shell response the
 adapter switches to the Playwright rung (consent accepted once, context kept
@@ -46,6 +47,10 @@ class MasterResult(BaseModel):
     selected_id: str  # product-state "ID": the variant the PDP had selected
     selected_shade: str | None = None
     shade_by_gtin: dict[str, str] = Field(default_factory=dict)  # empty = simple product
+    # gtin13 -> dwvar color value id. On some masters (Powder Blush) the val id
+    # IS the gtin13; on others (both foundations) it is an internal shade code
+    # ('4251070360' for Oslo) — joined via shade name from the swatch list.
+    color_val_by_gtin: dict[str, str] = Field(default_factory=dict)
     size_text: str | None = None
     inci_text: str | None = None
     inci_selected_gtin: str | None = None  # which shade the PDP had selected
@@ -78,10 +83,15 @@ def _has_product_state(text: str) -> bool:
     return parse_sfcc_product_state(text) is not None
 
 
+_MIN_INCI_DOTS = 3
+
+
 def extract_inci(html: str) -> str | None:
-    """The INGREDIENTS accordion body, excluding the trailing may-evolve
-    disclaimer paragraph. Kept verbatim (NARS separates tokens with middle
-    dots); normalization happens downstream."""
+    """The INCI list from the INGREDIENTS accordion. Accordions mix marketing
+    copy ("KEY INGREDIENTS: ... Helps soothe ...") and a disclaimer paragraph
+    with the real list; the INCI segment is identified as the block with the
+    most middle-dot separators (NARS always publishes " · "-separated INCI).
+    Kept verbatim; normalization happens downstream."""
     soup = BeautifulSoup(html, "lxml")
     for title in soup.select("a.accordion-title"):
         if title.get_text(strip=True).upper() != "INGREDIENTS":
@@ -92,10 +102,24 @@ def extract_inci(html: str) -> str | None:
         inner = item.select_one(".pdp-content-inner")
         if inner is None:
             continue
-        for p in inner.find_all("p"):
-            p.decompose()
-        text = " ".join(inner.get_text(" ", strip=True).split())
-        return text.strip(" ·") or None
+
+        segments = []
+        for element in inner.find_all(["p", "div"], recursive=False):
+            text = " ".join(element.get_text(" ", strip=True).split())
+            if text:
+                segments.append(text)
+        loose = " ".join(" ".join(inner.find_all(string=True, recursive=False)).split())
+        if loose:
+            segments.append(loose)
+
+        best, best_dots = None, 0
+        for segment in segments:
+            dots = segment.count(" · ")
+            if dots > best_dots:
+                best, best_dots = segment, dots
+        if best is not None and best_dots >= _MIN_INCI_DOTS:
+            return best.strip(" ·") or None
+        return None
     return None
 
 
@@ -148,9 +172,27 @@ class NarsAdapter:
             if shade:
                 shades[variant["id"]] = shade
 
+        # dwvar color val ids: join swatch-list shade names against the color
+        # attribute's vals (val id == gtin13 on some masters, an internal
+        # shade code on others)
+        val_id_by_shade: dict[str, str] = {}
+        for attribute in (state.get("variations") or {}).get("attributes") or []:
+            if attribute.get("id") != "color":
+                continue
+            for val in attribute.get("vals") or []:
+                shade_text = str(val.get("val") or "").casefold().strip()
+                if shade_text and val.get("id"):
+                    val_id_by_shade[shade_text] = str(val["id"])
+        color_val_by_gtin = {
+            gtin: val_id_by_shade.get(shade.casefold().strip(), gtin)
+            for gtin, shade in shades.items()
+        }
+
         selected_id = str(state.get("ID") or gtin13)
         size_match = _SIZE_DIV.search(fetch.text)
-        selected_shade = shades.get(selected_id)
+        selected_shade = str(state.get("color") or state.get("productColor") or "").strip() or None
+        if selected_shade is None:
+            selected_shade = shades.get(selected_id)
         if selected_shade is None:
             selected_shade = jsonld_selected_shade(parse_jsonld_products(fetch.text))
         return MasterResult(
@@ -161,6 +203,7 @@ class NarsAdapter:
             selected_id=selected_id,
             selected_shade=selected_shade,
             shade_by_gtin=shades,
+            color_val_by_gtin=color_val_by_gtin,
             size_text=size_match.group(1).strip() if size_match else None,
             inci_text=extract_inci(fetch.text),
             inci_selected_gtin=selected_id,
@@ -169,8 +212,9 @@ class NarsAdapter:
         )
 
     def variant_from_pdp(self, master: MasterResult) -> VariantResult:
-        """Simple products (no color swatch list): the PDP itself is the
-        GTIN-anchored evidence — its product-state ID is the variant id."""
+        """The PDP itself as GTIN-anchored evidence — its product-state ID is
+        the variant id. Used for simple products (no color swatch list) and
+        for delisted shades whose own PDP still resolves."""
         gtin13 = master.selected_id
         ean12 = gtin13[1:] if len(gtin13) == 13 and gtin13.startswith("0") else gtin13
         result = VariantResult(
@@ -183,7 +227,7 @@ class NarsAdapter:
             shade=master.selected_shade,
             size_text=master.size_text,
             returned_id=gtin13,
-            snippet=f'"ID":"{gtin13}" (PDP product-state, simple product)',
+            snippet=f'"ID":"{gtin13}" (PDP product-state self-anchor)',
             fetched_at=master.fetched_at,
             from_cache=master.from_cache,
         )
@@ -208,10 +252,11 @@ class NarsAdapter:
         return result
 
     def resolve_variant(self, master: MasterResult, gtin13: str) -> VariantResult:
+        color_val = master.color_val_by_gtin.get(gtin13, gtin13)
         url = self._controller(
             "Product-Variation",
             pid=master.master_id,
-            **{f"dwvar_{master.master_id}_color": gtin13},
+            **{f"dwvar_{master.master_id}_color": color_val},
             Quantity=1,
             format="ajax",
         )
@@ -243,8 +288,17 @@ class NarsAdapter:
             )
             return result
 
-        variant_entry = (state.get("variants") or {}).get(f"color-{gtin13}", {})
-        shade = (variant_entry.get("attributes") or {}).get("color")
+        # shade sources, most direct first: the partial's own selected-color
+        # keys, the variants map (keyed by gtin13 on some masters, by color
+        # val id on others), the master swatch list, JSON-LD
+        shade = str(state.get("color") or state.get("productColor") or "").strip() or None
+        if shade is None:
+            variant_entry = (state.get("variants") or {}).get(f"color-{gtin13}") or (
+                state.get("variants") or {}
+            ).get(f"color-{color_val}", {})
+            shade = (variant_entry.get("attributes") or {}).get("color")
+        if shade is None:
+            shade = master.shade_by_gtin.get(gtin13)
         if shade is None:
             shade = jsonld_selected_shade(parse_jsonld_products(fetch.text))
         size_match = _SIZE_DIV.search(fetch.text)

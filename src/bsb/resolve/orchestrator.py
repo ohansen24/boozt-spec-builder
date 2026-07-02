@@ -38,7 +38,8 @@ class OrderResolution(BaseModel):
     by_ean: dict[str, ResolvedEan] = Field(default_factory=dict)
     masters: dict[str, MasterResult] = Field(default_factory=dict)  # base_name -> master
     anchor_rejections: list[str] = Field(default_factory=list)
-    missing_shades: list[str] = Field(default_factory=list)
+    missing_shades: list[str] = Field(default_factory=list)  # unresolved -> blocking
+    swatch_warnings: list[str] = Field(default_factory=list)  # delisted but self-anchored PDP
     master_failures: list[str] = Field(default_factory=list)
 
     @property
@@ -120,10 +121,40 @@ def resolve_order(
 
             entry.in_swatch_list = row.gtin13 in master.shade_by_gtin
             if not entry.in_swatch_list:
-                result.missing_shades.append(
-                    f"{row.ean12} ({base} - {row.shade or '?'}): "
-                    f"not in {master.master_id} swatch list"
-                )
+                # delisted shade: the master's public swatch list omits it, but
+                # its own PDP may still exist and self-anchor the GTIN (seen
+                # live with LRF "Gobi"). Product-Variation would only return
+                # the master default, so don't bother calling it.
+                detail = f"{row.ean12} ({base} - {row.shade or '?'})"
+                try:
+                    own = adapter.discover_master(row.gtin13)
+                except (FetchError, ValueError) as exc:
+                    own = None
+                    fallback_error = str(exc)
+                if own is not None and own.selected_id == row.gtin13:
+                    if own.inci_text is None and master.inci_text is not None:
+                        # delisted PDPs render degraded; the group master's
+                        # INCI applies — same master id, one list per product
+                        own.inci_text = master.inci_text
+                        own.inci_selected_gtin = master.inci_selected_gtin
+                    entry.variant = adapter.variant_from_pdp(own)
+                    entry.ok = True
+                    entry.master = own
+                    result.swatch_warnings.append(
+                        f"{detail}: not in {master.master_id} swatch list (delisted?) — "
+                        f"resolved via own PDP, self-anchored ({own.pdp_url})"
+                    )
+                    progress(f"  ~ {row.ean12}: delisted from swatch list, own PDP self-anchors")
+                else:
+                    reason = (
+                        f"own PDP anchors {own.selected_id}" if own is not None else fallback_error
+                    )
+                    entry.error = (
+                        f"not in {master.master_id} swatch list; own-PDP fallback: {reason}"
+                    )
+                    result.missing_shades.append(f"{detail}: {entry.error}")
+                result.by_ean[row.ean12] = entry
+                continue
 
             try:
                 variant: VariantResult = adapter.resolve_variant(master, row.gtin13)
