@@ -65,6 +65,10 @@ svr:
   boozt_code: VI
   display_name: SVR
   domains: [fr.svr.com]
+  # probe 2026-07-03: Shopify but barcodes suppressed everywhere — brand site
+  # not EAN-addressable. Retailer-primary policy: generic resolver is the
+  # primary evidence; green requires TWO independent retailer families.
+  adapter: generic
   style_prefix: SVR
   gender_default: U
   country_iso: from_odm
@@ -73,6 +77,10 @@ aesop:
   boozt_code: EP
   display_name: Aesop - Labs
   domains: [www.aesop.com]
+  # probe 2026-07-03: bot-walled at httpx AND Playwright — retailer-primary
+  # via the generic resolver until a Firecrawl brand-site probe proves more
+  adapter: generic
+  search_brand: Aesop # display_name carries the Boozt suffix, not a search term
   style_prefix: AEOAES
   gender_default: U
   country_iso: from_odm

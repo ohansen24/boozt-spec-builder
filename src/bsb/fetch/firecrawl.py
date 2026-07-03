@@ -43,7 +43,20 @@ class FirecrawlClient:
         load_env()
         self.cache = cache
         self.limiter = limiter
-        self.api_key = api_key or os.environ.get("FIRECRAWL_API_KEY")
+        key = api_key or os.environ.get("FIRECRAWL_API_KEY")
+        if key and not key.startswith("fc-"):
+            key = "fc-" + key  # dashboard keys are fc-…; the prefix is easy to lose in copy
+        self.api_key = key
+        # usage accounting (the team credit endpoint rejects API keys, so we
+        # count requests: scrape = 1 credit; search billing is per result —
+        # we track both the calls and the results returned)
+        self.usage = {"scrapes": 0, "searches": 0, "search_results": 0, "cache_hits": 0}
+
+    def snapshot_usage(self) -> dict:
+        return dict(self.usage)
+
+    def usage_since(self, snapshot: dict) -> dict:
+        return {k: self.usage[k] - snapshot.get(k, 0) for k in self.usage}
 
     @property
     def available(self) -> bool:
@@ -71,7 +84,9 @@ class FirecrawlClient:
         if use_cache:
             cached = self.cache.get(cache_key)
             if cached is not None:
+                self.usage["cache_hits"] += 1
                 return cached
+        self.usage["scrapes"] += 1
         data = self._post(
             "scrape",
             {"url": url, "formats": ["rawHtml"], "waitFor": 3000 if render else 0},
@@ -99,13 +114,19 @@ class FirecrawlClient:
         if use_cache:
             cached = self.cache.get(cache_key)
             if cached is not None:
+                self.usage["cache_hits"] += 1
                 return json.loads(cached.text)
+        self.usage["searches"] += 1
         data = self._post("search", {"query": query, "limit": limit})
+        raw = data.get("data") or []
+        if isinstance(raw, dict):  # v1 sometimes nests under data.web
+            raw = raw.get("web") or []
         results = [
             {"url": item.get("url"), "title": item.get("title")}
-            for item in data.get("data") or []
-            if item.get("url")
+            for item in raw
+            if isinstance(item, dict) and item.get("url")
         ]
+        self.usage["search_results"] += len(results)
         self.cache.put(
             CachedFetch(
                 url=cache_key,

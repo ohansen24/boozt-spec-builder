@@ -41,7 +41,10 @@ def test_variant_axes_both_shapes():
 
 
 def test_firecrawl_gated_without_key(tmp_path, monkeypatch):
+    import bsb.fetch.firecrawl as fc
+
     monkeypatch.delenv("FIRECRAWL_API_KEY", raising=False)
+    monkeypatch.setattr(fc, "load_env", lambda *a, **k: None)  # ignore repo .env
     from bsb.fetch.cache import HttpCache
     from bsb.fetch.firecrawl import FirecrawlClient
     from bsb.fetch.ladder import HostRateLimiter
@@ -54,3 +57,17 @@ def test_firecrawl_gated_without_key(tmp_path, monkeypatch):
 
     with pytest.raises(FetchError, match="FIRECRAWL_API_KEY"):
         client.search("test")
+
+
+def test_firecrawl_key_prefix_normalized(tmp_path, monkeypatch):
+    import bsb.fetch.firecrawl as fc
+
+    monkeypatch.setattr(fc, "load_env", lambda *a, **k: None)
+    from bsb.fetch.cache import HttpCache
+    from bsb.fetch.firecrawl import FirecrawlClient
+    from bsb.fetch.ladder import HostRateLimiter
+
+    client = FirecrawlClient(HttpCache(tmp_path), HostRateLimiter(), api_key="abc123")
+    assert client.api_key == "fc-abc123"
+    client = FirecrawlClient(HttpCache(tmp_path), HostRateLimiter(), api_key="fc-abc123")
+    assert client.api_key == "fc-abc123"

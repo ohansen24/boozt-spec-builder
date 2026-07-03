@@ -71,6 +71,13 @@ def _extract_product_fields(products: list[dict]) -> dict:
     return {}
 
 
+_WALL_MARKERS = ("Just a moment", "Access Denied", "Pardon Our Interruption", "cf-challenge")
+
+
+def _looks_walled(html: str) -> bool:
+    return len(html) < 4000 or any(m in html for m in _WALL_MARKERS)
+
+
 class GenericResolver:
     def __init__(self, fetcher: PoliteFetcher, firecrawl: FirecrawlClient):
         self.fetcher = fetcher
@@ -103,10 +110,19 @@ class GenericResolver:
                 continue
             if len(hits) >= max_pages:
                 break
+            page = None
             try:
                 page = self.fetcher.get(url)
+                if _looks_walled(page.text):
+                    page = None
             except FetchError:
-                continue
+                page = None
+            if page is None:
+                # ladder rung 3: walled retailer pages go through Firecrawl
+                try:
+                    page = self.firecrawl.scrape(url, render=True)
+                except FetchError:
+                    continue
             products = parse_jsonld_products(page.text)
             evidence = page_asserts_gtin(page.text, gtin13, products)
             fields = _extract_product_fields(products)

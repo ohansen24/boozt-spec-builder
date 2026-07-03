@@ -132,6 +132,43 @@ def _resolve_sfcc(
     }
 
 
+def _resolve_generic(
+    brand_cfg: dict, gtin13: str, fetcher: PoliteFetcher, ean_cache: EanCache, adapter_cache: dict
+):
+    """Retailer-primary path (brand site not EAN-addressable): generic
+    resolver hits, GTIN-anchored pages only."""
+    from bsb.fetch.firecrawl import FirecrawlClient
+    from bsb.resolve.generic import GenericResolver
+
+    resolver = adapter_cache.get("generic")
+    if resolver is None:
+        firecrawl = FirecrawlClient(fetcher.cache, fetcher.limiter)
+        resolver = GenericResolver(fetcher, firecrawl)
+        adapter_cache["generic"] = resolver
+    if not resolver.available:
+        return None
+    ean12 = gtin13[1:] if len(gtin13) == 13 and gtin13.startswith("0") else gtin13
+    brand = str(brand_cfg.get("search_brand") or brand_cfg.get("display_name") or "")
+    hits = resolver.resolve(gtin13, ean12, brand, max_pages=4)
+    anchored = [h for h in hits if h.gtin_anchored and h.name]
+    if not anchored:
+        return None
+    best = anchored[0]
+    from bsb.validate.matrix import clean_retail_name
+
+    # retailer names are decorated (brand prefix, size suffix) — ship the
+    # cleaned form, exactly as the pipeline's normalization layer would
+    cleaned_name = clean_retail_name(best.name or "", brand) or best.name
+    return {
+        "style_name": cleaned_name,
+        "color_name": best.color,
+        "size": _size_from_text(best.size, best.name),
+        "ingredients": best.inci,
+        "_families": [h.family for h in anchored],
+        "_urls": [h.url for h in anchored],
+    }
+
+
 GOLDEN_FIELDS = ("style_name", "color_name", "size", "ingredients")
 
 
@@ -145,10 +182,15 @@ def golden_compare(
 ) -> GoldenResult:
     result = GoldenResult(brand=brand_key)
     adapter_type = brand_cfg.get("adapter")
-    if adapter_type not in ("shopify", "sfcc", "nars_sfcc"):
+    if adapter_type == "shopify":
+        resolver = _resolve_shopify
+    elif adapter_type in ("sfcc", "nars_sfcc"):
+        resolver = _resolve_sfcc
+    elif adapter_type == "generic":
+        resolver = _resolve_generic
+    else:
         result.notes.append(f"no resolve-capable adapter ({adapter_type!r}) — golden not runnable")
         return result
-    resolver = _resolve_shopify if adapter_type == "shopify" else _resolve_sfcc
 
     fetcher = PoliteFetcher(HttpCache(cache_dir))
     ean_cache = EanCache(cache_dir)
@@ -197,4 +239,7 @@ def golden_compare(
                     )
     finally:
         fetcher.close()
+    generic = adapter_cache.get("generic")
+    if generic is not None:
+        result.notes.append(f"firecrawl usage: {generic.firecrawl.usage}")
     return result

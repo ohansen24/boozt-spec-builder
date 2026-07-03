@@ -7,21 +7,30 @@ members:
     enabled: true
     notes: search A/B-bucketed per session (context-rotate retry); product
       pages embed per-variant barcodes = GTIN anchor
+  # Firecrawl re-probe 2026-07-03: walls bypassed for douglas/boots/notino/
+  # flaconi, but their search-result GRIDS are XHR-rendered even under
+  # Firecrawl — their PDPs are reachable only via web-search discovery, i.e.
+  # the generic resolver IS the engine for these families (live-verified:
+  # NARS control EAN returned GTIN-anchored retailer hits via search).
   douglas:
     enabled: false
-    reason: 403 at httpx and Playwright (Akamai) — retry via Firecrawl
+    reason: wall bypassed via Firecrawl; search grid XHR-empty — PDPs via
+      generic-resolver web search only
   boots:
     enabled: false
-    reason: Imperva challenge page — retry via Firecrawl
+    reason: wall bypassed via Firecrawl; search grid XHR-empty — PDPs via
+      generic-resolver web search only
   flaconi:
     enabled: false
-    reason: Cloudflare — retry via Firecrawl
+    reason: renders via Firecrawl; no results for probe EAN — reassess with
+      pharmacy-brand EANs
   sephora_de:
     enabled: false
-    reason: 403 — retry via Firecrawl
+    reason: still serves a 2.6KB shell even to Firecrawl
   notino:
     enabled: false
-    reason: Cloudflare — retry via Firecrawl
+    reason: wall bypassed via Firecrawl; search grid XHR-empty — PDPs via
+      generic-resolver web search only
 # Per-brand pools: French pharmacy brands need pharmacy retailers once any
 # are reachable (newpharma, shop-apotheke = probe candidates, unprobed).
 pools:
