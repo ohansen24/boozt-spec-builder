@@ -153,19 +153,30 @@ def _resolve_generic(
     anchored = [h for h in hits if h.gtin_anchored and h.name]
     if not anchored:
         return None
-    best = anchored[0]
+    # language preference: English sources first for NAME fields; local-
+    # language names are used (never translated) and flagged for review
+    english = [h for h in anchored if h.language == "en"]
+    best = english[0] if english else anchored[0]
+    local_language = None if english else best.language
     from bsb.validate.matrix import clean_retail_name
 
     # retailer names are decorated (brand prefix, size suffix) — ship the
     # cleaned form, exactly as the pipeline's normalization layer would
     cleaned_name = clean_retail_name(best.name or "", brand) or best.name
+    inci_hit = next((h for h in anchored if h.inci), None)
     return {
         "style_name": cleaned_name,
         "color_name": best.color,
-        "size": _size_from_text(best.size, best.name),
-        "ingredients": best.inci,
+        "size": _size_from_text(best.size, best.name)
+        or next(
+            (_size_from_text(h.size, h.name) for h in anchored if _size_from_text(h.size, h.name)),
+            None,
+        ),
+        "ingredients": inci_hit.inci if inci_hit else None,
         "_families": [h.family for h in anchored],
         "_urls": [h.url for h in anchored],
+        "_local_language_name": local_language,
+        "_inci_source": (inci_hit.family, inci_hit.inci_source) if inci_hit else None,
     }
 
 
@@ -212,6 +223,11 @@ def golden_compare(
                         result.fields[field].tool_missing += 1
                 continue
             result.resolved += 1
+            if resolved.get("_local_language_name"):
+                result.notes.append(
+                    f"{ean}: name from local-language source "
+                    f"({resolved['_local_language_name']}) — not translated, flagged"
+                )
             for field in GOLDEN_FIELDS:
                 ours, theirs = resolved.get(field), row.get(field)
                 ours_empty = ours in (None, "")

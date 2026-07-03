@@ -179,6 +179,21 @@ def confirm_name(
     )
 
 
+_WATER_WORDS = {"water", "aqua", "eau", "purified water"}
+
+
+def _water_canon(token: str) -> str:
+    """Compare-time ONLY (kit: never rewrite the stored value): multi-language
+    water naming is one ingredient — Water == Aqua == Eau == Water/Aqua/Eau ==
+    "Aqua (Purified Water)"."""
+    # token edge-cleaning may have eaten a closing paren — match it optional
+    base = re.sub(r"\([^)]*\)?", "", token).strip()
+    parts = [p.strip() for p in base.split("/") if p.strip()]
+    if parts and all(p in _WATER_WORDS for p in parts):
+        return "aqua"
+    return token
+
+
 def split_inci(text: str) -> tuple[list[str], list[str]]:
     """(base tokens, may-contain tokens), casefolded. The may-contain label
     varies wildly across sources ("[+/-(MAY CONTAIN/PEUT CONTENIR):",
@@ -203,7 +218,7 @@ def split_inci(text: str) -> tuple[list[str], list[str]]:
             cleaned = " ".join(token.split()).replace(" / ", "/").replace("/ ", "/")
             cleaned = cleaned.replace(" /", "/").strip(" .[]():+/-·").casefold()
             if cleaned:
-                out.append(cleaned)
+                out.append(_water_canon(cleaned))
         return out
 
     return tokens(base_part), tokens(may_part)

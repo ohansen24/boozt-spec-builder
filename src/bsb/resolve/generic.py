@@ -10,6 +10,7 @@ A page without a GTIN assertion is WEAK support only and is returned with
 gtin_anchored=False; it can never turn a field green.
 """
 
+import re
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel
@@ -40,11 +41,44 @@ class ResolverHit(BaseModel):
     family: str  # registrable-ish host, the independence unit
     gtin_anchored: bool
     anchor_evidence: str | None = None
+    language: str | None = None  # tld/lang-attr heuristic; en preferred for names
     name: str | None = None
     brand: str | None = None
     color: str | None = None
     size: str | None = None
     inci: str | None = None
+    inci_source: str | None = None
+
+
+_TLD_LANG = {
+    "de": "de",
+    "fr": "fr",
+    "es": "es",
+    "it": "it",
+    "nl": "nl",
+    "pl": "pl",
+    "lv": "lv",
+    "lt": "lt",
+    "se": "sv",
+    "dk": "da",
+    "fi": "fi",
+    "at": "de",
+    "ch": "de",
+    "uk": "en",
+    "com": "en",
+    "ie": "en",
+    "eu": None,
+}
+_HTML_LANG = re.compile(r"<html[^>]+lang=[\'\"]([a-zA-Z]{2})", re.IGNORECASE)
+
+
+def page_language(url: str, html: str) -> str | None:
+    """Cheap language heuristic: html lang attribute first, tld second."""
+    match = _HTML_LANG.search(html[:3000])
+    if match:
+        return match.group(1).lower()
+    tld = urlsplit(url).netloc.rsplit(".", 1)[-1].lower()
+    return _TLD_LANG.get(tld)
 
 
 def source_family(url: str) -> str:
@@ -126,12 +160,23 @@ class GenericResolver:
             products = parse_jsonld_products(page.text)
             evidence = page_asserts_gtin(page.text, gtin13, products)
             fields = _extract_product_fields(products)
+            inci_text = inci_source = None
+            if evidence is not None:
+                # retailer INCI only ever comes from GTIN-anchored pages
+                from bsb.extract.inci import extract_inci_from_html
+
+                candidate = extract_inci_from_html(page.text)
+                if candidate is not None:
+                    inci_text, inci_source = candidate.text, candidate.source
             hits.append(
                 ResolverHit(
                     url=page.final_url,
                     family=family,
                     gtin_anchored=evidence is not None,
                     anchor_evidence=evidence,
+                    language=page_language(page.final_url, page.text),
+                    inci=inci_text,
+                    inci_source=inci_source,
                     **fields,
                 )
             )

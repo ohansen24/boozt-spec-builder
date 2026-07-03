@@ -147,7 +147,7 @@ class TestInciCompare:
 
     def test_split_handles_comma_style(self):
         base, may = split_inci("Water, Talc, May Contain/Peut Contenir/(+/-): Ci 77491")
-        assert base == ["water", "talc"]
+        assert base == ["aqua", "talc"]  # water-class canonicalized at compare time
         assert may == ["ci 77491"]
 
 

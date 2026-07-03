@@ -71,3 +71,65 @@ def test_firecrawl_key_prefix_normalized(tmp_path, monkeypatch):
     assert client.api_key == "fc-abc123"
     client = FirecrawlClient(HttpCache(tmp_path), HostRateLimiter(), api_key="fc-abc123")
     assert client.api_key == "fc-abc123"
+
+
+def test_inci_plausibility_lint():
+    from bsb.extract.inci import inci_plausible
+
+    good = (
+        "Aqua, Glycerin, Niacinamide, Butylene Glycol, Dimethicone, "
+        "Phenoxyethanol, Parfum, Citric Acid"
+    )
+    assert inci_plausible(good)[0]
+    assert not inci_plausible("Aqua, Glycerin")[0]  # too few tokens
+    marketing = (
+        "This cream helps your skin feel great, apply daily for best results, "
+        "enriched with vitamins, delivers hydration, use daily, discover more"
+    )
+    assert not inci_plausible(marketing)[0]
+    assert not inci_plausible(good + ",")[0]  # truncated mid-list
+    weird = "Sparkle Magic, Unicorn Dust, Niacinamide, Butylene Glycol, Dimethicone, Parfum"
+    assert not inci_plausible(weird)[0]  # implausible lead
+
+
+def test_inci_extraction_labeled_and_inline():
+    from bsb.extract.inci import extract_inci_from_html
+
+    labeled = """
+    <div><h3>Ingredients</h3>
+    <p>Aqua, Glycerin, Niacinamide, Butylene Glycol, Dimethicone, Phenoxyethanol,
+    Parfum, Citric Acid, Sodium Hydroxide</p></div>
+    <p>This cream helps your skin.</p>"""
+    c = extract_inci_from_html(labeled)
+    assert c is not None and c.source == "labeled-section"
+    assert c.text.startswith("Aqua, Glycerin")
+
+    inline = (
+        "<div>Zusammensetzung: Aqua, Glycerin, Urea, Panthenol, Dimethicone, "
+        "Parfum, Citric Acid How to use daily</div>"
+    )
+    c = extract_inci_from_html(inline)
+    assert c is not None
+    assert "Citric Acid" in c.text and "How to use" not in c.text
+
+    assert extract_inci_from_html("<p>Great product, buy now!</p>") is None
+
+
+def test_water_equivalence_compare_time_only():
+    from bsb.validate.matrix import compare_inci
+
+    a = "Water/Aqua/Eau, Glycerin, Niacinamide"
+    b = "Aqua (Purified Water), Glycerin, Niacinamide"
+    assert compare_inci(a, b) == ("identical", "")
+    c = "Water, Glycerin, Niacinamide"
+    assert compare_inci(a, c) == ("identical", "")
+    # non-water tokens are never canonicalized
+    assert compare_inci("Aqua, Glycerin", "Aqua, Glycerine")[0] == "base_diff"
+
+
+def test_page_language_heuristics():
+    from bsb.resolve.generic import page_language
+
+    assert page_language("https://shop.example.de/p/x", "<html>") == "de"
+    assert page_language("https://x.com/p", '<html lang="fr">') == "fr"
+    assert page_language("https://x.com/p", "<html>") == "en"
