@@ -28,3 +28,13 @@ def load_brands(config_dir: Path = DEFAULT_CONFIG_DIR) -> dict:
 
 def load_header_synonyms(config_dir: Path = DEFAULT_CONFIG_DIR) -> dict[str, list[str]]:
     return load_yaml(config_dir / "header_synonyms.yaml")
+
+
+def load_order_overrides(order_number: str, config_dir: Path = DEFAULT_CONFIG_DIR) -> list[dict]:
+    """Per-order manual decisions from config/order_overrides/{order}.yaml
+    (empty list when the file does not exist)."""
+    path = config_dir / "order_overrides" / f"{order_number}.yaml"
+    if not path.exists():
+        return []
+    data = load_yaml(path) or {}
+    return list(data.get("overrides") or [])

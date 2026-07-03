@@ -72,10 +72,10 @@ def test_keyword_needs_word_boundary(rules, brands):
     assert categorize("Ellipse Cream", rules, brands["nars"]).category is None
 
 
-def test_color_code_foundation_family_is_1018_pending(rules):
+def test_color_code_foundation_family_is_1018_confirmed(rules):
     decision = color_code_for("Foundation", "Barcelona", rules)
     assert decision.code == 1018
-    assert decision.pending_confirmation  # open question 2 -> yellow
+    assert not decision.pending_confirmation  # confirmed Felina 2026-07-03
 
 
 def test_color_code_skincare_is_1017(rules):

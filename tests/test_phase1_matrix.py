@@ -8,7 +8,7 @@ import pytest
 from tests.conftest import FIXTURES
 
 from bsb.ingest.odm import OdmParseResult, OdmRow
-from bsb.models import SourceRef
+from bsb.models import FieldValue, SourceRef
 from bsb.normalize.boozt import normalize_color_name, normalize_style_name
 from bsb.resolve.adapters.nars import MasterResult, VariantResult
 from bsb.resolve.orchestrator import resolve_order
@@ -327,3 +327,61 @@ def test_shades_agree_identity_rules():
     assert not shades_agree("Fiji", "Punjab")
     assert not shades_agree("Orgasm", "Orgasm X")
     assert not shades_agree("Laguna 01", "Deep 01")
+
+
+def test_convert_us_size():
+    from bsb.normalize.boozt import convert_us_size
+
+    assert convert_us_size("0.18 fl oz") == (
+        "5.3 ml",
+        "converted from US size '0.18 fl oz' (0.18 fl oz)",
+    )
+    value, note = convert_us_size("0.14 oz")
+    assert value == "4 g" and "converted" in note
+    assert convert_us_size("30 ml") == ("30 ml", None)  # metric passes through
+    assert convert_us_size("mystery") == (None, None)
+
+
+def test_laguna_shade_override_from_config(brands):
+    from bsb.normalize.boozt import normalize_color_name
+
+    nars = brands["nars"]
+    assert (
+        normalize_color_name("Laguna 02 (Original)", nars, product_name="LAGUNA BRONZING POWDER")
+        == "Laguna 02"
+    )
+    assert normalize_color_name("1", nars, product_name="Laguna Bronzing Powder") == "Laguna 01"
+    # unnumbered classic shade falls through to default formatting
+    assert normalize_color_name("LAGUNA", nars, product_name="LAGUNA BRONZING POWDER") == "Laguna"
+    # other products unaffected
+    assert normalize_color_name("ORGASM – 777", nars, product_name="POWDER BLUSH") == "Orgasm"
+
+
+def test_apply_order_overrides():
+    from bsb.models import ProductRecord
+    from bsb.pipeline import apply_order_overrides
+
+    record = ProductRecord(ean12="194251136714", gtin13="0194251136714", brand="NARS")
+    record.size = FieldValue(value=None, status="CONFLICT", notes="brand 11 g vs LF 8 g")
+    applied = apply_order_overrides(
+        [record],
+        [
+            {
+                "field": "size",
+                "eans": ["194251136714"],
+                "value": "11 g",
+                "status": "VERIFIED",
+                "decided_by": "Felina",
+                "date": "2026-07-03",
+                "rationale": "relaunched version; LF still lists 8 g",
+            }
+        ],
+        "config/order_overrides/OR26BZQN0001.yaml",
+    )
+    assert applied == 1
+    assert record.size.value == "11 g"
+    assert record.size.status == "VERIFIED"
+    assert record.size.primary.method == "override"
+    assert record.size.primary.url == "config/order_overrides/OR26BZQN0001.yaml"
+    assert "LF 8 g" in record.size.notes or "8 g" in record.size.notes
+    assert "prior: CONFLICT" in record.size.notes

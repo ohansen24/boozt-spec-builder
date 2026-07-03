@@ -47,6 +47,12 @@ class RunSummary(BaseModel):
     ingest_issues: list[str] = Field(default_factory=list)
 
 
+def _by_design_blank(fv: FieldValue) -> bool:
+    """MANUAL blanks whose notes start with "by design:" are intentional
+    (e.g. style number issued by Boozt after receipt) — no fill, no review."""
+    return fv.status == "MANUAL" and not fv.value and fv.notes.startswith("by design:")
+
+
 def fill_for(fv: FieldValue) -> PatternFill | None:
     if fv.status in ("VERIFIED", "ODM_SOURCED"):
         return GREEN
@@ -55,7 +61,7 @@ def fill_for(fv: FieldValue) -> PatternFill | None:
     if fv.status in ("CONFLICT", "NOT_FOUND"):
         return RED
     if fv.status == "MANUAL":
-        return None if fv.value else YELLOW
+        return None if fv.value or _by_design_blank(fv) else YELLOW
     return None
 
 
@@ -137,8 +143,8 @@ def write_output(
 
                 status_counter[fv.status] += 1
                 rank = _STATUS_RANK.get(fv.status)
-                filled_manual = fv.status == "MANUAL" and fv.value
-                if rank is not None and not filled_manual:
+                settled_manual = fv.status == "MANUAL" and (fv.value or _by_design_blank(fv))
+                if rank is not None and not settled_manual:
                     review.append(
                         (
                             rank,

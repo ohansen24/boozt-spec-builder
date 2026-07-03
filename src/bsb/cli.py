@@ -22,10 +22,18 @@ def main() -> None:
     product data sheet with per-field provenance."""
 
 
+DEFAULT_TEMPLATE = Path(__file__).resolve().parents[2] / "data/templates/boozt_beauty_master.xlsx"
+
+
 @main.command()
 @click.option("--odm", "odm_path", required=True, type=click.Path(exists=True, dir_okay=False))
 @click.option(
-    "--template", "template_path", required=True, type=click.Path(exists=True, dir_okay=False)
+    "--template",
+    "template_path",
+    type=click.Path(exists=True, dir_okay=False),
+    default=str(DEFAULT_TEMPLATE),
+    show_default=True,
+    help="Boozt template copy target (explicit path wins over the master template)",
 )
 @click.option("--brand", "brand_key", required=True)
 @click.option("--out", "out_path", required=True, type=click.Path(dir_okay=False))
@@ -241,6 +249,22 @@ def _run_resolved(
             if not allow_size_anomalies:
                 raise SystemExit(2)
             run_meta["size anomalies (accepted)"] = " | ".join(size_anomalies)
+
+        from bsb.config import load_order_overrides
+        from bsb.pipeline import apply_order_overrides
+
+        if odm.order_number:
+            override_path = f"config/order_overrides/{odm.order_number}.yaml"
+            entries = load_order_overrides(odm.order_number)
+            if entries:
+                applied = apply_order_overrides(records, entries, override_path)
+                click.echo(f"\nOrder overrides ({override_path}): {applied} cells replaced")
+                run_meta["order overrides"] = f"{applied} cells from {override_path}"
+                # overridden size cells are settled decisions, not anomalies
+                overridden = {(str(ean), e["field"]) for e in entries for ean in e.get("eans", [])}
+                size_anomalies = [
+                    a for a in size_anomalies if (a.split(" ")[0], "size") not in overridden
+                ]
 
         conflict_rate = (conflict_cells / compared_cells) if compared_cells else 0.0
         click.echo(

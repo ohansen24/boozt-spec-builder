@@ -66,26 +66,27 @@ def test_fill_colors_by_status(output, synonyms):
     assert hex_of("purchase_price") == green  # ODM_SOURCED
     assert hex_of("category") == yellow  # SINGLE_SOURCE rule
     assert hex_of("color_code") == yellow  # lexicon Orgasm -> 1003
-    assert hex_of("style_number") == yellow  # MANUAL, empty, needs her input
+    assert hex_of("style_number") is None  # by-design blank: Boozt issues the prefix
     assert hex_of("style_name") == red  # NOT_FOUND (web source, Phase 1)
     assert hex_of("ingredients") == red
     assert hex_of("gender") is None  # MANUAL with value -> no fill
     assert hex_of("length") is None
 
 
-def test_foundation_rows_get_yellow_1018(output, synonyms):
+def test_foundation_rows_get_green_1018(output, synonyms):
+    """Confirmed Felina 2026-07-03 -> foundation-family 1018 ships green."""
     _summary, wb, records = output
     ws = wb["Data sheet"]
     tmap = map_headers(ws, synonyms)
     cc_col = tmap.columns["color_code"]
-    yellow = YELLOW.start_color.rgb
+    green = GREEN.start_color.rgb
 
     foundation_rows = [2 + i for i, r in enumerate(records) if r.category.value == "Foundation"]
     assert len(foundation_rows) == 67
     for row in foundation_rows:
         cell = ws.cell(row=row, column=cc_col)
         assert cell.value == 1018
-        assert _fill_hex(cell) == yellow
+        assert _fill_hex(cell) == green
 
 
 def test_values_written(output, synonyms):
@@ -142,3 +143,20 @@ def test_run_report_sheet_and_summary(output):
         (n for n, s in enumerate(statuses) if s in ("SINGLE_SOURCE", "MANUAL")), len(statuses)
     )
     assert all(s in ("CONFLICT", "NOT_FOUND") for s in statuses[:first_yellow])
+
+
+def test_by_design_blanks_not_in_review_queue(output, synonyms):
+    """style_number is an intentional blank (Boozt issues the prefix) — it
+    must not appear in the review queue at all."""
+    summary, wb, _records = output
+    fields = {i.field for i in summary.review_red} | {i.field for i in summary.review_yellow}
+    assert "style_number" not in fields
+
+
+def test_expiry_default_ships_green(output, synonyms):
+    _summary, wb, _records = output
+    ws = wb["Data sheet"]
+    tmap = map_headers(ws, synonyms)
+    cell = ws.cell(row=2, column=tmap.columns["expiry_on_pack"])
+    assert cell.value == "No"
+    assert _fill_hex(cell) == GREEN.start_color.rgb

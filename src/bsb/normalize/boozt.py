@@ -73,7 +73,35 @@ def _brand_title_case(text: str) -> str:
     return re.sub(r"[A-Za-zÀ-ÿ']+", lambda m: m.group(0).capitalize(), text)
 
 
-def normalize_color_name(value: object, brand_cfg: dict | None = None) -> str | None:
+_OZ = re.compile(r"(\d+(?:\.\d+)?)\s*(fl\.?\s*oz|oz)\b", re.IGNORECASE)
+
+
+def convert_us_size(value: object) -> tuple[str | None, str | None]:
+    """US imperial size -> Boozt metric ("0.18 fl oz" -> "5.3 ml",
+    "0.14 oz" -> "4 g"). Returns (metric size, conversion note) or
+    (None, None). Boozt needs metric; converted values ship yellow."""
+    if value is None:
+        return None, None
+    text = clean_ws(str(value))
+    metric = normalize_size(text)
+    if metric is not None:
+        return metric, None  # already metric, no conversion needed
+    m = _OZ.search(text)
+    if not m:
+        return None, None
+    amount = float(m.group(1))
+    if "fl" in m.group(2).lower():
+        converted, unit = amount * 29.5735, "ml"
+    else:
+        converted, unit = amount * 28.3495, "g"
+    rounded = round(converted, 1)
+    number = str(int(rounded)) if rounded == int(rounded) else str(rounded)
+    return f"{number} {unit}", f"converted from US size {text!r} ({m.group(0)})"
+
+
+def normalize_color_name(
+    value: object, brand_cfg: dict | None = None, product_name: str | None = None
+) -> str | None:
     """The brand's exact shade string, verbatim, trimmed — optionally passed
     through the brand's shade_format config (e.g. NARS site styling
     "ORGASM - 777" (site uses an en dash) -> "Orgasm"; provisional). The
@@ -84,6 +112,17 @@ def normalize_color_name(value: object, brand_cfg: dict | None = None) -> str | 
     cleaned = clean_ws(str(value))
     if not cleaned:
         return None
+    if product_name:
+        overrides = (brand_cfg or {}).get("shade_format_overrides") or {}
+        pn = product_name.casefold()
+        for key, override in overrides.items():
+            if str(key).casefold() not in pn:
+                continue
+            template = override.get("number_template")
+            digits = re.search(r"\d+", cleaned)
+            if template and digits:
+                return template.format(number=int(digits.group()))
+            break  # matched product but no applicable rule -> default formatting
     fmt = (brand_cfg or {}).get("shade_format") or {}
     if fmt.get("strip_numeric_suffix"):
         cleaned = _NUMERIC_SUFFIX.sub("", cleaned).strip()

@@ -1,0 +1,19 @@
+# Per-order manual decisions. Each entry replaces the pipeline's value for
+# the given field/EANs and appears in the Provenance sheet as the deciding
+# source (method "override", this file as URL).
+order: OR26BZQN0001
+overrides:
+  - field: size
+    eans:
+      - "194251136714"
+      - "194251136721"
+      - "194251136738"
+      - "194251136745"
+      - "194251136752"
+    value: 11 g
+    status: VERIFIED # ship green; the dissenting LF value stays in the note
+    decided_by: Felina
+    date: 2026-07-03
+    rationale: >-
+      Relaunched Laguna Bronzing Powder is the 11 g version (Felina: "not
+      100% sure"); Lookfantastic still lists 8 g for these barcodes.

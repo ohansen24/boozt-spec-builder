@@ -62,7 +62,7 @@ boozt-spec-builder/
 ```python
 class SourceRef(BaseModel):
     url: str
-    method: Literal["jsonld", "sfcc_api", "dom", "llm_extract", "odm", "msds"]
+    method: Literal["jsonld", "sfcc_api", "dom", "llm_extract", "odm", "msds", "override"]  # "override" added 2026-07-03: per-order human decisions
     fetched_at: datetime
     snippet: str = ""
 
@@ -265,6 +265,8 @@ color_codes: {1001: Cream, 1002: Beige, 1003: Pink, ..., 1022: Burgundy}
 category_overrides:
   foundation_family: [foundation, concealer, bb cream, cc cream, tinted moisturizer]
 ```
+
+Per-order manual decisions live in config/order_overrides/{ORDER}.yaml (field, eans, value, status, decided_by, date, rationale); they replace pipeline values at the end of the run and appear in the Provenance sheet as the deciding source (method "override").
 
 ## 12. Open questions
 

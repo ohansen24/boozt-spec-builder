@@ -129,10 +129,10 @@ color_code_rules:
     - Body Care
     - Hair care
     - Deodorants
-  # Rule 2: foundation family -> 1018 Natural. Deterministic per the guide but
-  # pending her confirmation (open question 2) -> always flagged yellow.
+  # Rule 2: foundation family -> 1018 Natural (guide rule; confirmed).
   foundation_family_code: 1018
-  foundation_family_pending: true
+  foundation_family_pending: false
+  foundation_family_note: confirmed Felina 2026-07-03
   # Rule 3b: curated shade lexicon, grown per run. Exact match on the
   # normalized shade unless match: prefix. Seeded only with kit-cited entries
   # plus the trivially safe Clear.

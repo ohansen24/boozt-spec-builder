@@ -32,7 +32,7 @@ from bsb.extract.structured import (
     parse_sfcc_product_state,
 )
 from bsb.fetch.cache import CachedFetch, EanCache
-from bsb.fetch.ladder import BotShell, PlaywrightSession, PoliteFetcher
+from bsb.fetch.ladder import BotShell, FetchError, PlaywrightSession, PoliteFetcher
 
 _SIZE_DIV = re.compile(
     r'class="attribute single-size">\s*<div class="value">\s*<span>([^<]+)</span>', re.DOTALL
@@ -54,6 +54,8 @@ class MasterResult(BaseModel):
     size_text: str | None = None
     inci_text: str | None = None
     inci_selected_gtin: str | None = None  # which shade the PDP had selected
+    region: str = "EU"
+    fallback_note: str | None = None  # why the EU site could not serve this
     fetched_at: datetime | None = None
     from_cache: bool = False
 
@@ -100,13 +102,14 @@ def extract_inci(html: str) -> str | None:
     and " • "-separated (with a "PARABEN FREE INGREDIENTS:" label) on others.
     Kept verbatim; normalization happens downstream."""
     soup = BeautifulSoup(html, "lxml")
-    for title in soup.select("a.accordion-title"):
+    for title in soup.select("a.accordion-title, a.accordion-toggle"):
         if title.get_text(strip=True).upper() != "INGREDIENTS":
             continue
         item = title.find_parent(class_="accordion-item")
-        if item is None:
-            continue
-        inner = item.select_one(".pdp-content-inner")
+        inner = item.select_one(".pdp-content-inner") if item is not None else None
+        if inner is None:
+            # US layout: the toggle's content section follows as a sibling
+            inner = title.find_next(class_="pdp-content-inner")
         if inner is None:
             continue
 
@@ -141,13 +144,17 @@ class NarsAdapter:
     ):
         self.fetcher = fetcher
         self.controller_base = str(brand_cfg["controller_base"]).rstrip("/") + "/"
+        us_cfg = brand_cfg.get("us_fallback") or {}
+        self.us_controller_base = (
+            str(us_cfg["controller_base"]).rstrip("/") + "/" if us_cfg else None
+        )
         self.ean_cache = ean_cache
         self.playwright = playwright
         self._escalated = False
 
-    def _controller(self, name: str, **params: object) -> str:
+    def _controller(self, name: str, base: str | None = None, **params: object) -> str:
         query = "&".join(f"{k}={quote(str(v), safe='')}" for k, v in params.items())
-        return f"{self.controller_base}{name}?{query}"
+        return f"{base or self.controller_base}{name}?{query}"
 
     def _get(self, url: str, *, referer: str | None, ajax: bool) -> CachedFetch:
         """httpx rung with automatic one-way escalation to Playwright."""
@@ -165,11 +172,36 @@ class NarsAdapter:
         return self.playwright.get(url, referer=referer or url, ajax=ajax)
 
     def discover_master(self, gtin13: str) -> MasterResult:
+        """EU site first; when the EU PDP is gone (410) or serves no product
+        state, fall back to narscosmetics.com (same SFRA platform, site id
+        nars_us). Same brand family, different region — callers ship
+        US-sourced fields yellow."""
         show_url = self._controller("Product-Show", pid=gtin13)
-        fetch = self._get(show_url, referer=None, ajax=False)
-        state = parse_sfcc_product_state(fetch.text)
+        eu_error: str | None = None
+        fetch = None
+        try:
+            fetch = self._get(show_url, referer=None, ajax=False)
+        except FetchError as exc:
+            eu_error = str(exc)
+        state = parse_sfcc_product_state(fetch.text) if fetch is not None else None
+        if state is None and eu_error is None:
+            eu_error = f"{show_url}: no product-state object in PDP payload"
+
+        region = "EU"
         if state is None:
-            raise ValueError(f"{show_url}: no product-state object in PDP payload")
+            if self.us_controller_base is None:
+                raise ValueError(eu_error)
+            us_url = self._controller("Product-Show", base=self.us_controller_base, pid=gtin13)
+            try:
+                fetch = self._get(us_url, referer=None, ajax=False)
+            except FetchError as exc:
+                raise ValueError(f"EU: {eu_error}; US: {exc}") from exc
+            state = parse_sfcc_product_state(fetch.text)
+            if state is None:
+                raise ValueError(
+                    f"EU: {eu_error}; US: {us_url}: no product-state object in PDP payload"
+                )
+            region = "US"
 
         master_id = state.get("masterID") or state.get("ID")
         shades: dict[str, str] = {}
@@ -223,6 +255,8 @@ class NarsAdapter:
             size_text=size_match.group(1).strip() if size_match else None,
             inci_text=extract_inci(fetch.text),
             inci_selected_gtin=selected_id,
+            region=region,
+            fallback_note=(f"EU site unavailable ({eu_error})" if region == "US" else None),
             fetched_at=fetch.fetched_at,
             from_cache=fetch.from_cache,
         )
@@ -269,8 +303,10 @@ class NarsAdapter:
 
     def resolve_variant(self, master: MasterResult, gtin13: str) -> VariantResult:
         color_val = master.color_val_by_gtin.get(gtin13, gtin13)
+        base = self.us_controller_base if master.region == "US" else None
         url = self._controller(
             "Product-Variation",
+            base=base,
             pid=master.master_id,
             **{f"dwvar_{master.master_id}_color": color_val},
             Quantity=1,

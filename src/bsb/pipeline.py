@@ -86,10 +86,7 @@ def build_record(
 
     cc = color_code_for(decision.category, row.shade, rules)
     if cc.code is not None:
-        notes = f"rule {cc.rule}"
-        if cc.pending_confirmation:
-            notes += " — pending confirmation (open question 2)"
-        record.color_code = FieldValue(value=str(cc.code), status="SINGLE_SOURCE", notes=notes)
+        record.color_code = _color_code_field(cc, rules)
     else:
         record.color_code = FieldValue(
             status="NOT_FOUND", notes="no color-code rule matched — fail closed"
@@ -111,12 +108,18 @@ def build_record(
     else:
         record.flammable = FieldValue(status="NOT_FOUND", notes="category undecided")
 
-    record.style_number = FieldValue(
-        status="MANUAL",
-        notes="NARS style-number prefix unconfirmed (open question 1) — fill manually"
-        if brand_cfg.get("style_prefix") is None
-        else "left for manual entry",
-    )
+    style_policy = brand_cfg.get("style_number_policy") or {}
+    if style_policy.get("by_design_blank"):
+        record.style_number = FieldValue(
+            status="MANUAL", notes="by design: " + str(style_policy.get("note", "blank"))
+        )
+    else:
+        record.style_number = FieldValue(
+            status="MANUAL",
+            notes="prefix unconfirmed — fill manually"
+            if brand_cfg.get("style_prefix") is None
+            else "left for manual entry",
+        )
 
     coo = hints.get("coo")
     if coo not in (None, ""):
@@ -144,11 +147,82 @@ def build_record(
         )
     else:
         record.extras["purchase_price"] = FieldValue(status="NOT_FOUND", notes="no ODM price")
-    record.extras["expiry_on_pack"] = FieldValue(
-        status="NOT_FOUND", notes="requires product knowledge (Phase 1)"
-    )
+    expiry_default = brand_cfg.get("expiry_on_pack_default") or {}
+    if expiry_default.get("value"):
+        record.extras["expiry_on_pack"] = FieldValue(
+            value=str(expiry_default["value"]),
+            status="VERIFIED",
+            notes=str(expiry_default.get("note", "brand default")),
+        )
+    else:
+        record.extras["expiry_on_pack"] = FieldValue(
+            status="NOT_FOUND", notes="requires product knowledge"
+        )
 
     return record
+
+
+def _color_code_field(cc, rules: dict) -> FieldValue:
+    """Foundation-family 1018 is human-confirmed (green); other rule hits
+    stay yellow pending web/lexicon confirmation."""
+    confirmed_note = (rules.get("color_code_rules") or {}).get("foundation_family_note")
+    if cc.rule == "foundation_family" and not cc.pending_confirmation and confirmed_note:
+        return FieldValue(
+            value=str(cc.code),
+            status="VERIFIED",
+            notes=f"rule {cc.rule}; {confirmed_note}",
+        )
+    notes = f"rule {cc.rule}"
+    if cc.pending_confirmation:
+        notes += " — pending confirmation"
+    return FieldValue(value=str(cc.code), status="SINGLE_SOURCE", notes=notes)
+
+
+def apply_order_overrides(
+    records: list[ProductRecord], overrides: list[dict], source_path: str
+) -> int:
+    """Per-order human decisions (config/order_overrides/{order}.yaml)
+    replace pipeline values; the override file becomes the deciding source in
+    provenance (method "override"), the prior state is kept in the notes."""
+    by_ean = {r.ean12: r for r in records}
+    applied = 0
+    for entry in overrides:
+        field = str(entry["field"])
+        value = str(entry["value"])
+        status = str(entry.get("status", "VERIFIED"))
+        decided_by = entry.get("decided_by", "?")
+        date = str(entry.get("date", ""))
+        rationale = str(entry.get("rationale", "")).strip()
+        for ean in entry.get("eans", []):
+            record = by_ean.get(str(ean))
+            if record is None:
+                continue
+            prior: FieldValue = (
+                getattr(record, field)
+                if field in ProductRecord.field_values()
+                else record.extras[field]
+            )
+            prior_note = f"prior: {prior.status}"
+            if prior.notes:
+                prior_note += f" — {prior.notes[:220]}"
+            new_fv = FieldValue(
+                value=value,
+                status=status,
+                primary=SourceRef(
+                    url=source_path,
+                    method="override",
+                    fetched_at=datetime.now(UTC),
+                    snippet=f"decided_by {decided_by} {date}: {rationale[:140]}",
+                ),
+                secondary=prior.primary,
+                notes=f"override by {decided_by} ({date}): {rationale}; {prior_note}",
+            )
+            if field in ProductRecord.field_values():
+                setattr(record, field, new_fv)
+            else:
+                record.extras[field] = new_fv
+            applied += 1
+    return applied
 
 
 def build_records(
@@ -177,7 +251,12 @@ def apply_resolution(
     validator matrix (kit 6.5). Returns anomaly strings (site size vs ODM
     hint mismatches) for the run gate."""
     from bsb.categorize.rules import categorize, color_code_for
-    from bsb.normalize.boozt import normalize_color_name, normalize_size, normalize_style_name
+    from bsb.normalize.boozt import (
+        convert_us_size,
+        normalize_color_name,
+        normalize_size,
+        normalize_style_name,
+    )
     from bsb.validate.guide import check_name_length
     from bsb.validate.matrix import (
         combine_exact,
@@ -236,9 +315,14 @@ def apply_resolution(
     if hint_note:
         record.style_name.notes += f"; {hint_note}"
 
-    # --- color_name: exact match across families (normalized per brand config)
-    site_shade = normalize_color_name(variant.shade, brand_cfg)
-    lf_shade = normalize_color_name(lf_variant.shade, brand_cfg) if lf_variant else None
+    # --- color_name: exact match across families (normalized per brand
+    # config; product-scoped overrides like Laguna's "Laguna 01" template)
+    site_shade = normalize_color_name(variant.shade, brand_cfg, product_name=site_name)
+    lf_shade = (
+        normalize_color_name(lf_variant.shade, brand_cfg, product_name=site_name)
+        if lf_variant
+        else None
+    )
     if site_shade is None and lf_shade is None:
         record.color_name = FieldValue(
             status="NOT_FOUND",
@@ -251,11 +335,26 @@ def apply_resolution(
         )
 
     # --- size: exact match, then ODM tertiary check
-    site_size = normalize_size(variant.size_text)
+    site_size, size_conversion_note = convert_us_size(variant.size_text)
     lf_size = normalize_size(lf_product.size_text) if lf_variant and lf_product.size_text else None
     record.size = combine_exact("size", site_size, nars_ref, lf_size, lf_ref)
+    if size_conversion_note:
+        # Boozt needs metric; a converted US size always ships yellow
+        if record.size.status == "VERIFIED":
+            record.size.status = "SINGLE_SOURCE"
+        record.size.notes += f"; {size_conversion_note}"
     odm_size = normalize_size(row.hints.get("size"), row.hints.get("size_unit"))
-    if record.size.status == "CONFLICT" and odm_size:
+    if record.size.status == "CONFLICT" and odm_size and site_size and odm_size == site_size:
+        # brand and ODM agree; exactly one validator disagrees -> yellow, not red
+        record.size = FieldValue(
+            value=site_size,
+            status="SINGLE_SOURCE",
+            primary=nars_ref,
+            secondary=lf_ref,
+            notes=f"brand and ODM agree on {site_size!r}; validator disagrees "
+            f"({lf_size!r}, {lf_ref.url if lf_ref else '?'}) — outlier, noted not conflicted",
+        )
+    elif record.size.status == "CONFLICT" and odm_size:
         record.size.notes += f"; ODM hint: {odm_size}"
     if odm_size and record.size.value and odm_size != record.size.value:
         anomalies.append(
@@ -332,10 +431,7 @@ def apply_resolution(
     # --- color_code + flammable follow the final category
     cc = color_code_for(decision.category, site_shade or row.shade, rules)
     if cc.code is not None:
-        notes_cc = f"rule {cc.rule}"
-        if cc.pending_confirmation:
-            notes_cc += " — pending confirmation (open question 2)"
-        record.color_code = FieldValue(value=str(cc.code), status="SINGLE_SOURCE", notes=notes_cc)
+        record.color_code = _color_code_field(cc, rules)
     else:
         record.color_code = FieldValue(
             status="NOT_FOUND", notes="no color-code rule matched — fail closed"
@@ -355,5 +451,17 @@ def apply_resolution(
         )
     else:
         record.flammable = FieldValue(status="NOT_FOUND", notes="category undecided")
+
+    if master.region == "US":
+        # same brand family, different region: ship yellow with both URLs
+        region_note = (
+            f"US site fallback ({master.pdp_url}); {master.fallback_note or 'EU unavailable'}"
+        )
+        for field in ("style_name", "color_name", "size", "ingredients"):
+            fv: FieldValue = getattr(record, field)
+            if fv.value is not None:
+                if fv.status == "VERIFIED":
+                    fv.status = "SINGLE_SOURCE"
+                fv.notes = (fv.notes + "; " if fv.notes else "") + region_note
 
     return anomalies

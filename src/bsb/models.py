@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 FieldStatus = Literal["VERIFIED", "SINGLE_SOURCE", "CONFLICT", "NOT_FOUND", "MANUAL", "ODM_SOURCED"]
 
-SourceMethod = Literal["jsonld", "sfcc_api", "dom", "llm_extract", "odm", "msds"]
+SourceMethod = Literal["jsonld", "sfcc_api", "dom", "llm_extract", "odm", "msds", "override"]
 
 
 class SourceRef(BaseModel):

@@ -16,16 +16,29 @@ nars:
   # is NARS's multi-use color stick.
   product_name_categories:
     multiple: Makeup
-  # Site styling -> sheet form. PROVISIONAL (run-report note until confirmed):
+  # Site styling -> sheet form (confirmed Felina 2026-07-03):
   # "ORGASM – 777" -> "Orgasm"; verbatim site string stays in provenance.
-  # Guide 1.1.5's example style is "Rose Sky". Formatting alone never
-  # downgrades a cell — shade identity follows the validation matrix.
+  # Formatting never downgrades a cell — identity follows the matrix.
   shade_format:
     strip_numeric_suffix: true # drop trailing " – NNN" site suffix
-    title_case: true # site publishes ALL CAPS
-    pending_note: NARS shade format pending confirmation (provisional title-case, numeric suffix stripped)
+    title_case: true # confirmed Felina 2026-07-03 ("Dolce Vita" style)
+  # Product-level exceptions (confirmed Felina 2026-07-03): matched casefold
+  # against the site product name; number_template rebuilds the shade from
+  # its first digit run.
+  shade_format_overrides:
+    "laguna bronzing powder":
+      number_template: "Laguna {number:02d}" # shades are literally "Laguna 01"…
   name_format:
     title_case: true # site publishes ALL CAPS ("POWDER BLUSH" -> "Powder Blush")
+  style_number_policy:
+    by_design_blank: true
+    note: "prefix issued by Boozt, Felina fills on receipt (confirmed Felina 2026-07-03)"
+  expiry_on_pack_default:
+    value: "No"
+    note: "NARS brand default; confirmed Felina 2026-07-03"
+  us_fallback:
+    controller_base: https://www.narscosmetics.com/on/demandware.store/Sites-nars_us-Site/en_US/
+    note: US site fallback (same brand family, different region) — ships yellow
 
 svr:
   display_name: SVR

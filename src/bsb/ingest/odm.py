@@ -42,6 +42,7 @@ class OdmRow(BaseModel):
 class OdmParseResult(BaseModel):
     rows: list[OdmRow]
     header_row: int
+    order_number: str | None = None  # from the metadata block above the header
     issues: list[str] = Field(default_factory=list)
     length_profile: dict[int, int] = Field(default_factory=dict)
 
@@ -126,6 +127,16 @@ def parse_odm(path: str | Path) -> OdmParseResult:
             col_by_header.setdefault(str(cell.value).strip(), cell.column)
     barcode_col = col_by_header["Barcode"]
 
+    order_number = None
+    for row in ws.iter_rows(min_row=1, max_row=header_row - 1):
+        values = [c.value for c in row]
+        for i, value in enumerate(values):
+            if str(value or "").strip().lower() == "order number":
+                rest = [v for v in values[i + 1 :] if v not in (None, "")]
+                if rest:
+                    order_number = str(rest[0]).strip()
+                break
+
     rows: list[OdmRow] = []
     issues: list[str] = []
     seen: dict[str, int] = {}
@@ -191,6 +202,7 @@ def parse_odm(path: str | Path) -> OdmParseResult:
     return OdmParseResult(
         rows=rows,
         header_row=header_row,
+        order_number=order_number,
         issues=issues,
         length_profile=dict(Counter(len(r.ean12) for r in rows)),
     )

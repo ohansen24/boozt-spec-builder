@@ -25,6 +25,7 @@ def test_exactly_119_rows(odm):
 
 def test_header_block_tolerated(odm):
     assert odm.header_row == 7  # metadata block sits above
+    assert odm.order_number == "OR26BZQN0001"  # read from the metadata block
 
 
 def test_all_check_digits_valid_no_dupes(odm):
