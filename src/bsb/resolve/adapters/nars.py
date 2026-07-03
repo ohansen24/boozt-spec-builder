@@ -54,7 +54,8 @@ class MasterResult(BaseModel):
     size_text: str | None = None
     inci_text: str | None = None
     inci_selected_gtin: str | None = None  # which shade the PDP had selected
-    region: str = "EU"
+    region: str = "EU"  # EU | US | ARCHIVE
+    archived_at: str | None = None  # snapshot date when region == ARCHIVE
     fallback_note: str | None = None  # why the EU site could not serve this
     fetched_at: datetime | None = None
     from_cache: bool = False
@@ -87,7 +88,7 @@ def _has_product_state(text: str) -> bool:
 
 _MIN_INCI_DOTS = 3
 _INCI_SEPARATORS = (" · ", " • ")  # NARS mixes middle dots and bullets per PDP
-_INCI_LABEL = re.compile(r"^[A-Z][A-Z /-]*INGREDIENTS?\s*:\s*")
+_INCI_LABEL = re.compile(r"^(?:[A-Z][A-Z /-]*?)??INGREDIENTS?\s*:\s*")
 
 
 def _inci_separator_count(text: str) -> int:
@@ -158,6 +159,12 @@ class NarsAdapter:
         self.us_controller_base = (
             str(us_cfg["controller_base"]).rstrip("/") + "/" if us_cfg else None
         )
+        archive_cfg = brand_cfg.get("archive_fallback") or {}
+        self.archive = None
+        if archive_cfg.get("domain"):
+            from bsb.resolve.archive import WaybackArchive
+
+            self.archive = WaybackArchive(fetcher, str(archive_cfg["domain"]))
         self.ean_cache = ean_cache
         self.playwright = playwright
         self._escalated = False
@@ -198,20 +205,38 @@ class NarsAdapter:
             eu_error = f"{show_url}: no product-state object in PDP payload"
 
         region = "EU"
+        archived_at: str | None = None
+        us_error: str | None = None
         if state is None:
-            if self.us_controller_base is None:
-                raise ValueError(eu_error)
-            us_url = self._controller("Product-Show", base=self.us_controller_base, pid=gtin13)
-            try:
-                fetch = self._get(us_url, referer=None, ajax=False)
-            except FetchError as exc:
-                raise ValueError(f"EU: {eu_error}; US: {exc}") from exc
-            state = parse_sfcc_product_state(fetch.text)
-            if state is None:
-                raise ValueError(
-                    f"EU: {eu_error}; US: {us_url}: no product-state object in PDP payload"
-                )
-            region = "US"
+            if self.us_controller_base is not None:
+                us_url = self._controller("Product-Show", base=self.us_controller_base, pid=gtin13)
+                try:
+                    fetch = self._get(us_url, referer=None, ajax=False)
+                    state = parse_sfcc_product_state(fetch.text)
+                    if state is None:
+                        us_error = f"{us_url}: no product-state object in PDP payload"
+                    else:
+                        region = "US"
+                except FetchError as exc:
+                    us_error = str(exc)
+            else:
+                us_error = "no US fallback configured"
+
+        if state is None and self.archive is not None:
+            # last rung: the brand's own archived PDP, GTIN-anchor unchanged
+            snapshot = self.archive.find_pdp_snapshot(gtin13)
+            if snapshot is not None:
+                try:
+                    fetch = self.fetcher.get(snapshot.url)
+                    state = parse_sfcc_product_state(fetch.text)
+                    if state is not None:
+                        region = "ARCHIVE"
+                        archived_at = snapshot.date
+                except FetchError:
+                    state = None
+
+        if state is None:
+            raise ValueError(f"EU: {eu_error}; US: {us_error}; archive: no usable snapshot")
 
         master_id = state.get("masterID") or state.get("ID")
         shades: dict[str, str] = {}
@@ -266,7 +291,8 @@ class NarsAdapter:
             inci_text=extract_inci(fetch.text),
             inci_selected_gtin=selected_id,
             region=region,
-            fallback_note=(f"EU site unavailable ({eu_error})" if region == "US" else None),
+            archived_at=archived_at,
+            fallback_note=(f"EU site unavailable ({eu_error})" if region != "EU" else None),
             fetched_at=fetch.fetched_at,
             from_cache=fetch.from_cache,
         )

@@ -45,6 +45,7 @@ class RunSummary(BaseModel):
     unknown_headers: list[str] = Field(default_factory=list)
     missing_fields: list[str] = Field(default_factory=list)
     ingest_issues: list[str] = Field(default_factory=list)
+    verify_at_receipt: list[ReviewItem] = Field(default_factory=list)
 
 
 def _by_design_blank(fv: FieldValue) -> bool:
@@ -202,6 +203,18 @@ def write_output(
     review_red = [r for rank, r in review if rank == 0]
     review_yellow = [r for rank, r in review if rank == 1]
 
+    # receiving checklist: cells flagged for confirmation against physical
+    # goods at warehouse receipt (Felina's checkpoint), independent of color
+    receipt_checks = [
+        ReviewItem(ean=r.ean12, field=f, status=fv.status, value=fv.value, notes=fv.notes)
+        for r in records
+        for f, fv in (
+            [(name, getattr(r, name)) for name in ProductRecord.field_values()]
+            + list(r.extras.items())
+        )
+        if "VERIFY_AT_RECEIPT" in fv.notes
+    ]
+
     report = wb.create_sheet("Run report")
     for key, value in run_meta.items():
         if key.startswith("_"):
@@ -227,6 +240,12 @@ def write_output(
     report.append(["category", "rows"])
     for category, count in sorted(category_counter.items()):
         report.append([category, count])
+    if receipt_checks:
+        report.append([])
+        report.append(["VERIFY AT RECEIPT — confirm against physical goods (warehouse)"])
+        report.append(["ean", "field", "value", "notes"])
+        for item in receipt_checks:
+            report.append([item.ean, item.field, item.value, item.notes])
     report.append([])
     report.append(["review queue (red first, then yellow)"])
     report.append(["ean", "field", "status", "value", "notes"])
@@ -246,4 +265,5 @@ def write_output(
         unknown_headers=[h for _, h in tmap.unknown_headers],
         missing_fields=tmap.missing_fields,
         ingest_issues=list(run_meta.get("_ingest_issues", [])),
+        verify_at_receipt=receipt_checks,
     )

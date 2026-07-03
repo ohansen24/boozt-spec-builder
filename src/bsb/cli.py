@@ -374,6 +374,12 @@ def _print_summary(s: RunSummary) -> None:
     for category, count in sorted(s.category_totals.items(), key=lambda kv: -kv[1]):
         click.echo(f"  {category:20} {count}")
 
+    if s.verify_at_receipt:
+        click.echo(
+            f"\nVERIFY AT RECEIPT ({len(s.verify_at_receipt)} cells — warehouse checkpoint):"
+        )
+        for item in s.verify_at_receipt:
+            click.echo(f"  {item.ean} {item.field} = {item.value!r}")
     click.echo(
         f"\nReview queue: {len(s.review_red)} red, {len(s.review_yellow)} yellow "
         "(see 'Run report' sheet)"

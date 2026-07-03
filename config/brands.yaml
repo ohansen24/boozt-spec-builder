@@ -39,6 +39,10 @@ nars:
   us_fallback:
     controller_base: https://www.narscosmetics.com/on/demandware.store/Sites-nars_us-Site/en_US/
     note: US site fallback (same brand family, different region) — ships yellow
+  # Last rung: Wayback snapshots of the brand's own PDPs, GTIN-anchored,
+  # yellow-only, snapshot date recorded in provenance.
+  archive_fallback:
+    domain: narscosmetics.eu
 
 svr:
   display_name: SVR

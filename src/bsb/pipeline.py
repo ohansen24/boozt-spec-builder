@@ -205,6 +205,11 @@ def apply_order_overrides(
             prior_note = f"prior: {prior.status}"
             if prior.notes:
                 prior_note += f" — {prior.notes[:220]}"
+            flag = (
+                "VERIFY_AT_RECEIPT — confirm against physical goods at warehouse receipt; "
+                if entry.get("verify_at_receipt")
+                else ""
+            )
             new_fv = FieldValue(
                 value=value,
                 status=status,
@@ -215,7 +220,7 @@ def apply_order_overrides(
                     snippet=f"decided_by {decided_by} {date}: {rationale[:140]}",
                 ),
                 secondary=prior.primary,
-                notes=f"override by {decided_by} ({date}): {rationale}; {prior_note}",
+                notes=f"{flag}override by {decided_by} ({date}): {rationale}; {prior_note}",
             )
             if field in ProductRecord.field_values():
                 setattr(record, field, new_fv)
@@ -452,11 +457,17 @@ def apply_resolution(
     else:
         record.flammable = FieldValue(status="NOT_FOUND", notes="category undecided")
 
-    if master.region == "US":
-        # same brand family, different region: ship yellow with both URLs
-        region_note = (
-            f"US site fallback ({master.pdp_url}); {master.fallback_note or 'EU unavailable'}"
-        )
+    if master.region in ("US", "ARCHIVE"):
+        # non-primary brand evidence never ships green on its own
+        if master.region == "US":
+            region_note = (
+                f"US site fallback ({master.pdp_url}); {master.fallback_note or 'EU unavailable'}"
+            )
+        else:
+            region_note = (
+                "delisted from current site; filled from archived brand page "
+                f"(snapshot {master.archived_at}, {master.pdp_url})"
+            )
         for field in ("style_name", "color_name", "size", "ingredients"):
             fv: FieldValue = getattr(record, field)
             if fv.value is not None:

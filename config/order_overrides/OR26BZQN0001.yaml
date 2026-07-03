@@ -12,6 +12,8 @@ overrides:
       - "194251136752"
     value: 11 g
     status: VERIFIED # ship green; the dissenting LF value stays in the note
+    verify_at_receipt: true # brand relaunch changed a physical spec; which
+    # version we hold is confirmed against goods at warehouse receipt
     decided_by: Felina
     date: 2026-07-03
     rationale: >-

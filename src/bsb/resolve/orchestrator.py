@@ -105,6 +105,35 @@ def resolve_order(
         for row in rows:
             entry = ResolvedEan(ean12=row.ean12, gtin13=row.gtin13, master=master)
 
+            if master.region == "ARCHIVE":
+                # archived pages cannot serve variation calls: each EAN needs
+                # its own self-anchoring snapshot PDP
+                entry.in_swatch_list = None
+                own = master
+                if master.selected_id != row.gtin13:
+                    try:
+                        own = adapter.discover_master(row.gtin13)
+                    except (FetchError, ValueError) as exc:
+                        entry.error = f"archived PDP not found for this GTIN: {exc}"
+                        result.by_ean[row.ean12] = entry
+                        progress(f"  ✗ {row.ean12}: {entry.error}")
+                        continue
+                if own.selected_id == row.gtin13:
+                    entry.variant = adapter.variant_from_pdp(own)
+                    entry.ok = True
+                    entry.master = own
+                    result.swatch_warnings.append(
+                        f"{row.ean12} ({base} - {row.shade or '?'}): delisted from current "
+                        f"site — filled from archived brand page "
+                        f"(snapshot {own.archived_at}, {own.pdp_url})"
+                    )
+                    progress(f"  ~ {row.ean12}: archived brand page (snapshot {own.archived_at})")
+                else:
+                    entry.error = f"archived PDP anchors {own.selected_id}, not {row.gtin13}"
+                    result.missing_shades.append(f"{row.ean12} ({base}): {entry.error}")
+                result.by_ean[row.ean12] = entry
+                continue
+
             if master.is_simple_product:
                 # no color dimension: the PDP itself anchors its own GTIN
                 entry.in_swatch_list = None

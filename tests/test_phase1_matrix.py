@@ -412,3 +412,85 @@ def test_unparseable_partial_falls_back_to_self_anchoring_pdp():
     assert entry.ok
     assert entry.variant.shade == "Walk This Way"
     assert not result.blocking_anomalies
+
+
+def test_wayback_snapshot_picks_latest():
+    from bsb.resolve.archive import WaybackArchive
+
+    class FakeFetch:
+        def get(self, url, **kw):
+            from datetime import UTC, datetime
+
+            from bsb.fetch.cache import CachedFetch
+
+            body = (
+                '[["urlkey","timestamp","original","mimetype","statuscode","digest","length"],'
+                '["eu,narscosmetics)/en/x/0607845013570.html","20200806064354",'
+                '"https://www.narscosmetics.eu/en/turbo-afterglow-lip-balm/0607845013570.html","text/html","200","A","1"],'
+                '["eu,narscosmetics)/en/y/0607845013570.html","20251017151136",'
+                '"https://www.narscosmetics.eu/en/afterglow-lip-balm/0607845013570.html","text/html","200","B","1"]]'
+            )
+            return CachedFetch(
+                url=url, final_url=url, status=200, text=body, fetched_at=datetime.now(UTC)
+            )
+
+    archive = WaybackArchive(FakeFetch(), "narscosmetics.eu")
+    snap = archive.find_pdp_snapshot("0607845013570")
+    assert snap is not None
+    assert snap.timestamp == "20251017151136"
+    assert snap.date == "2025-10-17"
+    assert snap.url.startswith("https://web.archive.org/web/20251017151136id_/")
+
+
+def test_archive_region_resolves_via_own_snapshots():
+    """Archived masters cannot serve variation calls: each EAN resolves via
+    its own self-anchoring snapshot PDP, warned as archive-sourced."""
+    turbo = _master({})
+    turbo.region = "ARCHIVE"
+    turbo.archived_at = "2025-10-17"
+    turbo.selected_id = "0607845013570"
+    turbo.selected_shade = "Turbo"
+    turbo.product_name = "Afterglow Lip Balm"
+    orgasm = _master({})
+    orgasm.region = "ARCHIVE"
+    orgasm.archived_at = "2025-10-17"
+    orgasm.selected_id = "0607845034209"
+    orgasm.selected_shade = "Orgasm"
+    orgasm.product_name = "Afterglow Lip Balm"
+    odm = _odm(
+        [
+            _row("607845013570", "Afterglow Lip Balm - Turbo"),
+            _row("607845034209", "Afterglow Lip Balm - Orgasm"),
+        ]
+    )
+    result = resolve_order(odm, FakeAdapter(turbo, own_pdp={"0607845034209": orgasm}))
+    assert result.counts()["resolved_ok"] == 2
+    assert result.by_ean["607845034209"].variant.shade == "Orgasm"
+    assert len(result.swatch_warnings) == 2
+    assert all("archived brand page" in w for w in result.swatch_warnings)
+    assert not result.blocking_anomalies
+
+
+def test_verify_at_receipt_flag_in_override():
+    from bsb.models import ProductRecord
+    from bsb.pipeline import apply_order_overrides
+
+    record = ProductRecord(ean12="194251136714", gtin13="0194251136714", brand="NARS")
+    record.size = FieldValue(value=None, status="CONFLICT", notes="11 g vs 8 g")
+    apply_order_overrides(
+        [record],
+        [
+            {
+                "field": "size",
+                "eans": ["194251136714"],
+                "value": "11 g",
+                "verify_at_receipt": True,
+                "decided_by": "Felina",
+                "date": "2026-07-03",
+                "rationale": "relaunch",
+            }
+        ],
+        "x.yaml",
+    )
+    assert record.size.notes.startswith("VERIFY_AT_RECEIPT")
+    assert "warehouse receipt" in record.size.notes
