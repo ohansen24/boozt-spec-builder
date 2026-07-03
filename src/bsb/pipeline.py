@@ -345,11 +345,23 @@ def apply_resolution(
             )
     if site_shade is None and lf_shade is None:
         if record.color_name.status != "NOT_FOUND" or not record.color_name.notes:
-            record.color_name = FieldValue(
-                status="NOT_FOUND",
-                primary=nars_ref,
-                notes="no shade on brand site — no-color convention pending (open question 3)",
-            )
+            aliases = {str(a).casefold() for a in rules.get("no_color_aliases", [])}
+            hint = (row.shade or "").strip()
+            if hint and hint.casefold() not in aliases:
+                # the ODM names a real shade: this row is NOT shadeless — the
+                # no-color convention must never be applied to it
+                record.color_name = FieldValue(
+                    status="NOT_FOUND",
+                    primary=nars_ref,
+                    notes=f"shade expected per ODM hint {hint!r} but no anchored source "
+                    "asserts it — not a no-color row",
+                )
+            else:
+                record.color_name = FieldValue(
+                    status="NOT_FOUND",
+                    primary=nars_ref,
+                    notes="no shade on brand site — no-color convention pending (open question 3)",
+                )
     else:
         record.color_name = combine_exact(
             "shade", site_shade, nars_ref, lf_shade, lf_ref, agree=shades_agree

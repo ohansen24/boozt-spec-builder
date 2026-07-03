@@ -535,3 +535,16 @@ def test_lf_size_axis_never_ships_as_shade(lf_html):
     )
     assert product is not None
     assert all(v.shade is None for v in product.by_barcode.values())
+
+
+def test_shade_from_title():
+    """Size-axis products (Climax Mascara) carry the shade in the PDP title."""
+    from bsb.resolve.adapters.nars import shade_from_title
+
+    html = "<title>Explicit Black Climax Mascara | NARS</title>"
+    assert shade_from_title(html, "Climax Mascara") == "Explicit Black"
+    # pages titled exactly like the product are genuinely shadeless
+    assert shade_from_title("<title>Soft Matte Primer | NARS</title>", "Soft Matte Primer") is None
+    assert shade_from_title("<title>Soft Matte Primer</title>", "Soft Matte Primer") is None
+    assert shade_from_title("<title>Other Product | NARS</title>", "Climax Mascara") is None
+    assert shade_from_title("no title here", "Climax Mascara") is None

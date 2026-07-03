@@ -95,6 +95,24 @@ def _inci_separator_count(text: str) -> int:
     return max(text.count(sep) for sep in _INCI_SEPARATORS)
 
 
+_TITLE = re.compile(r"<title>(.*?)</title>", re.DOTALL)
+
+
+def shade_from_title(html: str, product_name: str) -> str | None:
+    """Size-axis products (Climax Mascara: variants are Full Size/Mini) carry
+    the shade in the PDP title instead of a color attribute — "Explicit Black
+    Climax Mascara | NARS". The leading remainder after stripping the product
+    name is the shade; pages titled exactly like the product yield None."""
+    match = _TITLE.search(html)
+    if not match or not product_name:
+        return None
+    title = match.group(1).split("|")[0].strip()
+    if len(title) <= len(product_name) or not title.casefold().endswith(product_name.casefold()):
+        return None
+    shade = title[: len(title) - len(product_name)].strip(" -–—")  # noqa: RUF001
+    return shade or None
+
+
 def extract_inci(html: str) -> str | None:
     """The INCI list from the INGREDIENTS accordion. Accordions mix marketing
     copy ("KEY INGREDIENTS: ... Helps soothe ...") and a disclaimer paragraph
@@ -278,6 +296,8 @@ class NarsAdapter:
             selected_shade = shades.get(selected_id)
         if selected_shade is None:
             selected_shade = jsonld_selected_shade(parse_jsonld_products(fetch.text))
+        if selected_shade is None:
+            selected_shade = shade_from_title(fetch.text, str(state.get("name") or ""))
         return MasterResult(
             master_id=str(master_id),
             product_name=str(state.get("name") or ""),
