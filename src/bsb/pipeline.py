@@ -269,6 +269,7 @@ def apply_resolution(
         confirm_name,
         odm_name_check,
         shades_agree,
+        similarity,
     )
 
     anomalies: list[str] = []
@@ -328,12 +329,24 @@ def apply_resolution(
         if lf_variant
         else None
     )
+    if site_shade is None and lf_shade is not None and row.shade:
+        # validator-only shade: gate against the ODM hint (kit 6.5 tertiary
+        # check) — a retailer variant axis mislabeled as shade must not ship
+        if not shades_agree(lf_shade, row.shade) and similarity(lf_shade, row.shade) < 0.5:
+            lf_shade = None
+            record.color_name = FieldValue(
+                status="NOT_FOUND",
+                primary=nars_ref,
+                notes=f"brand site has no shade; validator value rejected — does not match "
+                f"ODM hint {row.shade!r} (likely a non-shade variant axis)",
+            )
     if site_shade is None and lf_shade is None:
-        record.color_name = FieldValue(
-            status="NOT_FOUND",
-            primary=nars_ref,
-            notes="no shade on brand site — no-color convention pending (open question 3)",
-        )
+        if record.color_name.status != "NOT_FOUND" or not record.color_name.notes:
+            record.color_name = FieldValue(
+                status="NOT_FOUND",
+                primary=nars_ref,
+                notes="no shade on brand site — no-color convention pending (open question 3)",
+            )
     else:
         record.color_name = combine_exact(
             "shade", site_shade, nars_ref, lf_shade, lf_ref, agree=shades_agree

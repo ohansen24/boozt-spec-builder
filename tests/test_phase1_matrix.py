@@ -517,3 +517,21 @@ def test_verify_at_receipt_flag_in_override():
     )
     assert record.size.notes.startswith("VERIFY_AT_RECEIPT")
     assert "warehouse receipt" in record.size.notes
+
+
+def test_lf_size_axis_never_ships_as_shade(lf_html):
+    """LF mascara variants use optionKey 'Size' — the parser must only take
+    the 'Shade' axis (live find: 'Full Size' shipped as Climax Mascara's
+    color name)."""
+    import json
+
+    from bsb.resolve.validators import LookfantasticValidator
+
+    html = lf_html.replace(
+        json.dumps("optionKey") + ':"Shade"', json.dumps("optionKey") + ':"Size"'
+    )
+    product = LookfantasticValidator._parse_product(
+        object.__new__(LookfantasticValidator), html, "https://lf/p/x", False
+    )
+    assert product is not None
+    assert all(v.shade is None for v in product.by_barcode.values())

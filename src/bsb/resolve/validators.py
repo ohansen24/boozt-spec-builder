@@ -119,13 +119,22 @@ class LookfantasticValidator:
             barcode = str(entry.get("barcode") or "")
             if not barcode:
                 continue
-            choices = entry.get("choices") or []
-            first = choices[0] if choices and isinstance(choices[0], dict) else {}
+            # only the "Shade" option axis is a shade — mascara variants use
+            # optionKey "Size" ("Full Size"/"Travel Size"), which must never
+            # ship as a color name
+            shade_choice = next(
+                (
+                    c
+                    for c in entry.get("choices") or []
+                    if isinstance(c, dict) and c.get("optionKey") == "Shade"
+                ),
+                {},
+            )
             by_barcode[barcode] = LfVariant(
                 barcode=barcode,
-                shade=first.get("title"),
+                shade=shade_choice.get("title"),
                 variant_title=entry.get("title"),
-                swatch_hex=first.get("colour"),
+                swatch_hex=shade_choice.get("colour"),
             )
 
         name = None
