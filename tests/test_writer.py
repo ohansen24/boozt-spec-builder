@@ -148,7 +148,7 @@ def test_run_report_sheet_and_summary(output):
 def test_by_design_blanks_not_in_review_queue(output, synonyms):
     """style_number is an intentional blank (Boozt issues the prefix) — it
     must not appear in the review queue at all."""
-    summary, wb, _records = output
+    summary, _wb, _records = output
     fields = {i.field for i in summary.review_red} | {i.field for i in summary.review_yellow}
     assert "style_number" not in fields
 
