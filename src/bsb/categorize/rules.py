@@ -51,11 +51,29 @@ def categorize(product_name: str, rules: dict, brand_cfg: dict | None = None) ->
     return CategoryDecision()  # fail closed
 
 
-def color_code_for(category: str | None, shade: str | None, rules: dict) -> ColorCodeDecision:
-    """Boozt Color code (1001-1022) per build kit 6.7. Phase 0 implements
-    rule 1 (skincare/colorless -> 1017), rule 2 (foundation family -> 1018,
-    pending confirmation) and rule 3b (curated shade lexicon). Swatch-hex and
-    LLM proposals are Phase 1. None -> empty and red."""
+def is_multi_shade_product(product_name: str | None, rules: dict) -> bool:
+    """Palettes, quads, trios: one shade name, several colors — the shade
+    lexicon must never decide these."""
+    if not product_name:
+        return False
+    name = product_name.casefold()
+    markers = (rules.get("color_code_rules") or {}).get("multi_shade_markers") or []
+    return any(re.search(rf"(?<!\w){re.escape(str(m).casefold())}(?!\w)", name) for m in markers)
+
+
+def color_code_for(
+    category: str | None,
+    shade: str | None,
+    rules: dict,
+    brand_cfg: dict | None = None,
+    product_name: str | None = None,
+) -> ColorCodeDecision:
+    """Boozt Color code (1001-1022) per build kit 6.7: rule 1
+    (skincare/colorless -> 1017), rule 2 (foundation family -> 1018) and
+    rule 3b (curated shade lexicon, keyed per BRAND — shade names collide
+    across brands). Multi-shade products bypass the lexicon and fail closed
+    until a product-type rule exists. Swatch-hex and LLM proposals are
+    Phase 1. None -> empty and red."""
     cc_rules = rules["color_code_rules"]
 
     if category == "Foundation":
@@ -68,9 +86,14 @@ def color_code_for(category: str | None, shade: str | None, rules: dict) -> Colo
     if category in cc_rules["clear_categories"]:
         return ColorCodeDecision(code=1017, rule="clear_category")
 
+    if is_multi_shade_product(product_name, rules):
+        # fail closed with an explicit reason: needs Felina's product-type
+        # rule (dominant shade vs 1016 Multi-Colored), never a lexicon entry
+        return ColorCodeDecision(rule="multi_shade_product")
+
     if shade:
         needle = shade.casefold().strip()
-        for entry in cc_rules["shade_lexicon"]:
+        for entry in (brand_cfg or {}).get("shade_lexicon") or []:
             lexeme = str(entry["shade"]).casefold()
             hit = needle.startswith(lexeme) if entry.get("match") == "prefix" else needle == lexeme
             if hit:

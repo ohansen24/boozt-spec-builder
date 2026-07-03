@@ -84,13 +84,8 @@ def build_record(
             status="NOT_FOUND", notes="no categorization rule matched — fail closed, never guessed"
         )
 
-    cc = color_code_for(decision.category, row.shade, rules)
-    if cc.code is not None:
-        record.color_code = _color_code_field(cc, rules)
-    else:
-        record.color_code = FieldValue(
-            status="NOT_FOUND", notes="no color-code rule matched — fail closed"
-        )
+    cc = color_code_for(decision.category, row.shade, rules, brand_cfg, row.base_name)
+    record.color_code = _color_code_field(cc, rules)
 
     if decision.category in rules["dg_trigger_categories"]:
         # DG rows are always red until a human confirms against the SDS (6.8)
@@ -164,7 +159,15 @@ def build_record(
 
 def _color_code_field(cc, rules: dict) -> FieldValue:
     """Foundation-family 1018 is human-confirmed (green); other rule hits
-    stay yellow pending web/lexicon confirmation."""
+    stay yellow pending web/lexicon confirmation; undecided fails closed."""
+    if cc.code is None:
+        if cc.rule == "multi_shade_product":
+            return FieldValue(
+                status="NOT_FOUND",
+                notes="multi-shade product (quad/palette) — shade lexicon not applicable; "
+                "needs Felina's product-type rule (dominant shade vs 1016 Multi-Colored)",
+            )
+        return FieldValue(status="NOT_FOUND", notes="no color-code rule matched — fail closed")
     confirmed_note = (rules.get("color_code_rules") or {}).get("foundation_family_note")
     if cc.rule == "foundation_family" and not cc.pending_confirmation and confirmed_note:
         return FieldValue(
@@ -447,13 +450,10 @@ def apply_resolution(
         )
 
     # --- color_code + flammable follow the final category
-    cc = color_code_for(decision.category, site_shade or row.shade, rules)
-    if cc.code is not None:
-        record.color_code = _color_code_field(cc, rules)
-    else:
-        record.color_code = FieldValue(
-            status="NOT_FOUND", notes="no color-code rule matched — fail closed"
-        )
+    cc = color_code_for(
+        decision.category, site_shade or row.shade, rules, brand_cfg, site_name or row.base_name
+    )
+    record.color_code = _color_code_field(cc, rules)
 
     if decision.category in rules["dg_trigger_categories"]:
         record.flammable = FieldValue(

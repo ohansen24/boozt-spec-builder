@@ -83,16 +83,36 @@ def test_color_code_skincare_is_1017(rules):
     assert color_code_for("Body Care", None, rules).code == 1017
 
 
-def test_color_code_shade_lexicon(rules):
-    assert color_code_for("Makeup", "Orgasm", rules).code == 1003
-    assert color_code_for("Makeup", "Laguna 03", rules).code == 1010  # prefix entry
-    assert color_code_for("Makeup", "Clear", rules).code == 1017
+def test_color_code_shade_lexicon_is_brand_scoped(rules, brands):
+    nars = brands["nars"]
+    assert color_code_for("Makeup", "Orgasm", rules, nars).code == 1003
+    assert color_code_for("Makeup", "Laguna 03", rules, nars).code == 1010  # prefix entry
+    assert color_code_for("Makeup", "Clear", rules, nars).code == 1017
     # exact entries must not prefix-match: Orgasm X is NOT confirmed pink
-    assert color_code_for("Makeup", "Orgasm X", rules).code is None
+    assert color_code_for("Makeup", "Orgasm X", rules, nars).code is None
+    # same shade name, different brand: no lexicon -> fail closed
+    assert color_code_for("Makeup", "Orgasm", rules, brands["olaplex"]).code is None
+    assert color_code_for("Makeup", "Orgasm", rules, None).code is None
 
 
-def test_color_code_fails_closed(rules):
-    decision = color_code_for("Makeup", "Rebellion", rules)
+def test_multi_shade_products_never_use_the_lexicon(rules, brands):
+    """One shade name, several colors: the Orgasm QUAD must not inherit the
+    Orgasm blush's 1003 — fails closed to Felina's product-type rule."""
+    nars = brands["nars"]
+    for name in ("Eyeshadow Quad", "Quad Eyeshadow", "Some Palette", "Cheek Trio", "Lip Duo"):
+        decision = color_code_for("Makeup", "Orgasm", rules, nars, product_name=name)
+        assert decision.code is None, name
+        assert decision.rule == "multi_shade_product"
+    # single-shade products with similar words are unaffected
+    assert color_code_for("Makeup", "Orgasm", rules, nars, product_name="Powder Blush").code == 1003
+    # "quadra"-like words must not trip the word-boundary marker
+    assert (
+        color_code_for("Makeup", "Orgasm", rules, nars, product_name="Quadrille Blush").code == 1003
+    )
+
+
+def test_color_code_fails_closed(rules, brands):
+    decision = color_code_for("Makeup", "Rebellion", rules, brands["nars"])
     assert decision.code is None
 
 

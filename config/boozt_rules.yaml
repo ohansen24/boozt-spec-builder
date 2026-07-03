@@ -133,19 +133,22 @@ color_code_rules:
   foundation_family_code: 1018
   foundation_family_pending: false
   foundation_family_note: confirmed Felina 2026-07-03
-  # Rule 3b: curated shade lexicon, grown per run. Exact match on the
-  # normalized shade unless match: prefix. Seeded only with kit-cited entries
-  # plus the trivially safe Clear.
-  shade_lexicon:
-    - shade: orgasm
-      code: 1003
-    - shade: deep rose
-      code: 1003
-    - shade: laguna
-      code: 1010
-      match: prefix
-    - shade: clear
-      code: 1017
+  # Rule 3b lives per brand: shade names collide between brands, so the
+  # curated lexicon is keyed (brand, shade) in brands.yaml.
+  #
+  # Multi-shade products (palettes, quads, shade sets) carry several colors
+  # under one shade name — the lexicon must never decide them. Detected by
+  # name marker; they fail closed to Felina. Her decision belongs HERE as a
+  # product-type rule (e.g. "palette -> dominant shade code" or
+  # "palette -> 1016 Multi-Colored"), never as a per-shade lexicon entry.
+  # Her old WIP coded the Orgasm quad 1003, so dominant-color may be her
+  # convention — pending confirmation:
+  # multi_shade_default: dominant   # or: 1016
+  multi_shade_markers:
+    - quad
+    - palette
+    - trio
+    - duo
 
 # Observed no-color conventions across finished sheets (open question 3:
 # which to standardize on). Mixed usage is a lint flag.

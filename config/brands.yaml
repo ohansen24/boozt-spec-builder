@@ -39,6 +39,19 @@ nars:
   expiry_on_pack_default:
     value: "No"
     note: "NARS brand default; confirmed Felina 2026-07-03"
+  # Curated shade lexicon (kit 6.7 rule 3b), keyed to THIS brand — shade
+  # names collide across brands. Exact match on the normalized shade unless
+  # match: prefix. Grown per run from confirmed shades.
+  shade_lexicon:
+    - shade: orgasm
+      code: 1003
+    - shade: deep rose
+      code: 1003
+    - shade: laguna
+      code: 1010
+      match: prefix
+    - shade: clear
+      code: 1017
   us_fallback:
     controller_base: https://www.narscosmetics.com/on/demandware.store/Sites-nars_us-Site/en_US/
     note: US site fallback (same brand family, different region) — ships yellow
