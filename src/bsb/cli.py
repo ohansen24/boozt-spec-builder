@@ -456,7 +456,6 @@ def probe_brand_cmd(
 ) -> None:
     """Probe a brand before building: platform, EAN addressability, on-site
     INCI, fixtures + a draft brands.yaml entry. No gates, no bespoke code."""
-    import json as _json
 
     from bsb.fetch.cache import HttpCache
     from bsb.fetch.ladder import PoliteFetcher
