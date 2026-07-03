@@ -332,11 +332,13 @@ def apply_resolution(
         if lf_variant
         else None
     )
+    rejected_validator_shade = False
     if site_shade is None and lf_shade is not None and row.shade:
         # validator-only shade: gate against the ODM hint (kit 6.5 tertiary
         # check) — a retailer variant axis mislabeled as shade must not ship
         if not shades_agree(lf_shade, row.shade) and similarity(lf_shade, row.shade) < 0.5:
             lf_shade = None
+            rejected_validator_shade = True
             record.color_name = FieldValue(
                 status="NOT_FOUND",
                 primary=nars_ref,
@@ -344,7 +346,7 @@ def apply_resolution(
                 f"ODM hint {row.shade!r} (likely a non-shade variant axis)",
             )
     if site_shade is None and lf_shade is None:
-        if record.color_name.status != "NOT_FOUND" or not record.color_name.notes:
+        if not rejected_validator_shade:
             aliases = {str(a).casefold() for a in rules.get("no_color_aliases", [])}
             hint = (row.shade or "").strip()
             if hint and hint.casefold() not in aliases:

@@ -64,9 +64,10 @@ def normalize_category(value: object, rules: dict) -> str | None:
     return None
 
 
-# Standalone numeric shade-code tokens at either edge, separated by "-", "–",
-# or whitespace. The EU site styles these per product line: "ORGASM – 777"
-# (suffix), "888 DOLCE VITA" (prefix, space), "500 - FARAWAY" (prefix, dash).
+# Standalone numeric shade-code tokens at either edge, separated by a hyphen,
+# an en dash, or whitespace. The EU site styles these per product line:
+# "ORGASM <en dash> 777" (suffix), "888 DOLCE VITA" (prefix, space),
+# "500 - FARAWAY" (prefix, hyphen).
 _SHADE_CODE_PREFIX = re.compile(r"^\d+(?:\s*[-–—]\s*|\s+)")  # noqa: RUF001 - site uses en dash
 _SHADE_CODE_SUFFIX = re.compile(r"(?:\s*[-–—]\s*|\s+)\d+\s*$")  # noqa: RUF001
 _HAS_LETTER = re.compile(r"[A-Za-zÀ-ÿ]")
