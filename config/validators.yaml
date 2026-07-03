@@ -1,0 +1,38 @@
+# Validator pool v2 (kit 6.3 item 3). Probe status 2026-07-03, httpx +
+# Playwright rungs; the Firecrawl rung is implemented but blocked on
+# FIRECRAWL_API_KEY (.env) — re-probe the disabled members when it lands.
+# Rule unchanged: no GTIN assertion on the page -> WEAK support only.
+members:
+  lookfantastic:
+    enabled: true
+    notes: search A/B-bucketed per session (context-rotate retry); product
+      pages embed per-variant barcodes = GTIN anchor
+  douglas:
+    enabled: false
+    reason: 403 at httpx and Playwright (Akamai) — retry via Firecrawl
+  boots:
+    enabled: false
+    reason: Imperva challenge page — retry via Firecrawl
+  flaconi:
+    enabled: false
+    reason: Cloudflare — retry via Firecrawl
+  sephora_de:
+    enabled: false
+    reason: 403 — retry via Firecrawl
+  notino:
+    enabled: false
+    reason: Cloudflare — retry via Firecrawl
+# Per-brand pools: French pharmacy brands need pharmacy retailers once any
+# are reachable (newpharma, shop-apotheke = probe candidates, unprobed).
+pools:
+  default: [lookfantastic]
+  pharmacy: [lookfantastic] # + pharmacy retailers when reachable
+brand_pools:
+  nars: default
+  olaplex: default
+  k18: default
+  benefit: default
+  aesop: default
+  avene: pharmacy
+  aderma: pharmacy
+  svr: pharmacy

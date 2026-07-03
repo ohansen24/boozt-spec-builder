@@ -26,3 +26,16 @@ def test_classify_inci_formatting_agnostic():
     assert _classify_values("ingredients", ours, theirs) == ("AGREE", "")
     verdict = _classify_values("ingredients", ours, "Talc, Dimethicone, May Contain: Ci 77491")
     assert verdict[0] == "DISAGREE" and "base_diff" in verdict[1]
+
+
+def test_brand_for_order():
+    from bsb.config import brand_for_order, load_brands
+
+    brands = load_brands()
+    assert brand_for_order("OR26BZQN0001", brands) == "nars"
+    assert brand_for_order("OR26BZOX0001", brands) == "olaplex"
+    assert brand_for_order("OR26BZCSC0003", brands) == "colorescience"
+    assert brand_for_order("OR26BZDRM0001", brands) == "aderma"
+    assert brand_for_order("OR26RLGC0008", brands) is None  # not a BZ order
+    assert brand_for_order(None, brands) is None
+    assert brand_for_order("OR26BZZZ0001", brands) is None  # unknown code

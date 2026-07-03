@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from bsb.fetch.ladder import FetchError
 from bsb.ingest.odm import OdmParseResult, OdmRow
-from bsb.resolve.adapters.nars import MasterResult, NarsAdapter, VariantResult
+from bsb.resolve.adapters.sfcc import MasterResult, SfccAdapter, VariantResult
 
 MAX_DISCOVERY_ATTEMPTS = 3
 
@@ -65,7 +65,7 @@ def _group_by_base(rows: list[OdmRow]) -> dict[str, list[OdmRow]]:
 
 def resolve_order(
     odm: OdmParseResult,
-    adapter: NarsAdapter,
+    adapter: SfccAdapter,
     bases_filter: set[str] | None = None,
     progress: Callable[[str], None] = lambda _msg: None,
 ) -> OrderResolution:

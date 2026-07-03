@@ -38,3 +38,21 @@ def load_order_overrides(order_number: str, config_dir: Path = DEFAULT_CONFIG_DI
         return []
     data = load_yaml(path) or {}
     return list(data.get("overrides") or [])
+
+
+_ORDER_CODE = __import__("re").compile(r"^OR\d{2}BZ([A-Z]+?)\d+$")
+
+
+def brand_for_order(order_number: str | None, brands: dict) -> str | None:
+    """Boozt order numbers embed the brand code (OR26BZ{code}0001) — map it
+    back through brands.yaml boozt_code entries. BZ orders only."""
+    if not order_number:
+        return None
+    match = _ORDER_CODE.match(order_number.strip().upper())
+    if not match:
+        return None
+    code = match.group(1)
+    for key, cfg in brands.items():
+        if str(cfg.get("boozt_code", "")).upper() == code:
+            return key
+    return None

@@ -110,3 +110,48 @@ def jsonld_selected_shade(products: list[dict]) -> str | None:
                 value = prop.get("value")
                 return str(value) if value is not None else None
     return None
+
+
+_MICRODATA_GTIN = re.compile(
+    r'itemprop="(?:gtin1?[234]?|ean)"[^>]*content="(\d{8,14})"', re.IGNORECASE
+)
+_GTIN_KEYS = ("gtin13", "gtin12", "gtin14", "gtin8", "gtin", "ean", "sku", "mpn")
+
+
+def gtin_forms(gtin13: str) -> set[str]:
+    """Acceptable textual forms of one GTIN (12- and 13-digit)."""
+    forms = {gtin13}
+    if len(gtin13) == 13 and gtin13.startswith("0"):
+        forms.add(gtin13[1:])
+    if len(gtin13) == 12:
+        forms.add("0" + gtin13)
+    return forms
+
+
+def page_asserts_gtin(
+    html: str, gtin13: str, jsonld_products: list[dict] | None = None
+) -> str | None:
+    """GTIN-anchor check (charter principle 2): the exact GTIN must appear in
+    the page's structured data (JSON-LD/microdata) or visible content.
+    Returns a short evidence tag ("jsonld:gtin13", "microdata", "content")
+    or None."""
+    forms = gtin_forms(gtin13)
+    for product in jsonld_products if jsonld_products is not None else parse_jsonld_products(html):
+        for key in _GTIN_KEYS:
+            value = str(product.get(key) or "").strip()
+            if value in forms:
+                return f"jsonld:{key}"
+        offers = product.get("offers")
+        offer_list = offers if isinstance(offers, list) else [offers] if offers else []
+        for offer in offer_list:
+            if isinstance(offer, dict):
+                for key in _GTIN_KEYS:
+                    if str(offer.get(key) or "").strip() in forms:
+                        return f"jsonld:offers.{key}"
+    for match in _MICRODATA_GTIN.finditer(html):
+        if match.group(1) in forms:
+            return "microdata"
+    for form in forms:
+        if re.search(rf"(?<!\d){re.escape(form)}(?!\d)", html):
+            return "content"
+    return None

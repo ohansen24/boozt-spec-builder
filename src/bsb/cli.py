@@ -35,7 +35,12 @@ DEFAULT_TEMPLATE = Path(__file__).resolve().parents[2] / "data/templates/boozt_b
     show_default=True,
     help="Boozt template copy target (explicit path wins over the master template)",
 )
-@click.option("--brand", "brand_key", required=True)
+@click.option(
+    "--brand",
+    "brand_key",
+    default=None,
+    help="Brand key (default: auto-detect from the ODM order number)",
+)
 @click.option("--out", "out_path", required=True, type=click.Path(dir_okay=False))
 @click.option(
     "--config",
@@ -82,12 +87,26 @@ def run(
     rules = load_rules(config_dir)
     synonyms = load_header_synonyms(config_dir)
 
+    odm = parse_odm(odm_path)
+
+    if brand_key is None:
+        from bsb.config import brand_for_order
+
+        brand_key = brand_for_order(odm.order_number, brands)
+        if brand_key is None:
+            raise click.BadParameter(
+                f"cannot auto-detect brand from order {odm.order_number!r} — pass --brand"
+            )
+        click.echo(f"Brand auto-detected from order {odm.order_number}: {brand_key}")
     brand_key = brand_key.lower()
     if brand_key not in brands:
         raise click.BadParameter(f"unknown brand {brand_key!r}; known: {', '.join(sorted(brands))}")
     brand_cfg = brands[brand_key]
+    if brand_cfg.get("out_of_scope"):
+        raise click.ClickException(
+            f"brand {brand_key!r} is out of scope (different Boozt template/guide)"
+        )
 
-    odm = parse_odm(odm_path)
     bases_filter = None
     if bases_csv:
         bases_filter = {b.strip() for b in bases_csv.split(",") if b.strip()}
@@ -154,18 +173,21 @@ def _run_resolved(
     from bsb.fetch.cache import EanCache, HttpCache
     from bsb.fetch.ladder import PlaywrightSession, PoliteFetcher
     from bsb.pipeline import apply_resolution
-    from bsb.resolve.adapters.nars import NarsAdapter
+    from bsb.resolve.adapters.sfcc import SfccAdapter
     from bsb.resolve.orchestrator import resolve_order
     from bsb.resolve.validators import IncidecoderWeak, LookfantasticValidator, cache_lf_hit
 
-    if brand_cfg.get("adapter") != "nars_sfcc":
-        raise click.ClickException(f"--resolve: no adapter configured for brand {brand_key!r}")
+    if brand_cfg.get("adapter") not in ("nars_sfcc", "sfcc"):
+        raise click.ClickException(
+            f"--resolve: no resolve-capable adapter configured for brand {brand_key!r} "
+            f"(adapter={brand_cfg.get('adapter')!r})"
+        )
 
     http_cache = HttpCache(cache_dir)
     ean_cache = EanCache(cache_dir)
     fetcher = PoliteFetcher(http_cache)
     playwright = PlaywrightSession(http_cache, fetcher.limiter)
-    adapter = NarsAdapter(fetcher, brand_cfg, ean_cache, playwright)
+    adapter = SfccAdapter(fetcher, brand_cfg, ean_cache, playwright)
 
     try:
         click.echo(f"Resolving {len(odm.rows)} EANs master-first…")
@@ -405,6 +427,83 @@ def _print_summary(s: RunSummary) -> None:
         )
 
 
+ANSWER_KEY_FIXTURES = {
+    "aesop": "tests/fixtures/aesop_final.xlsx",
+    "olaplex": "tests/fixtures/olaplex_final.xlsx",
+    "svr": "data/inbox/blank_template.xlsx",  # Felina's finished SVR rows
+}
+
+
+@main.command("probe-brand")
+@click.argument("brand_key")
+@click.option("--eans", "eans_csv", default=None, help="Comma-separated sample EANs")
+@click.option("--samples", default=5, type=int, show_default=True)
+@click.option(
+    "--config",
+    "config_dir",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=DEFAULT_CONFIG_DIR,
+    show_default=True,
+)
+@click.option(
+    "--cache-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=Path("cache"),
+    show_default=True,
+)
+def probe_brand_cmd(
+    brand_key: str, eans_csv: str | None, samples: int, config_dir: Path, cache_dir: Path
+) -> None:
+    """Probe a brand before building: platform, EAN addressability, on-site
+    INCI, fixtures + a draft brands.yaml entry. No gates, no bespoke code."""
+    import json as _json
+
+    from bsb.fetch.cache import HttpCache
+    from bsb.fetch.ladder import PoliteFetcher
+    from bsb.probe import probe_brand
+
+    brands = load_brands(config_dir)
+    brand_key = brand_key.lower()
+    if brand_key not in brands:
+        raise click.BadParameter(f"unknown brand {brand_key!r}")
+
+    sample_eans: list[str] = []
+    if eans_csv:
+        sample_eans = [e.strip() for e in eans_csv.split(",") if e.strip()]
+    elif brand_key in ANSWER_KEY_FIXTURES:
+        from openpyxl import load_workbook
+
+        ws = load_workbook(ANSWER_KEY_FIXTURES[brand_key])["Data sheet"]
+        sample_eans = [
+            str(ws.cell(row=r, column=1).value)
+            for r in range(2, ws.max_row + 1)
+            if ws.cell(row=r, column=1).value
+        ][:samples]
+
+    fetcher = PoliteFetcher(HttpCache(cache_dir))
+    try:
+        report = probe_brand(
+            brand_key, brands[brand_key], fetcher, sample_eans, Path("tests/fixtures/probes")
+        )
+    finally:
+        fetcher.close()
+
+    out = Path(f"data/out/probe_{brand_key}.json")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(report.model_dump_json(indent=1))
+    click.echo(f"PROBE {brand_key}: platform={report.platform} domain={report.domain}")
+    click.echo(f"  ean_addressable: {report.ean_addressable}  ({report.ean_evidence})")
+    if report.barcodes_in_catalog:
+        click.echo(f"  catalog barcodes: {report.barcodes_in_catalog}")
+    click.echo(f"  inci_on_site: {report.inci_on_site}  ({report.inci_evidence})")
+    for note in report.notes:
+        click.echo(f"  note: {note}")
+    click.echo(f"  fixtures: {len(report.fixtures)} | report: {out}")
+    click.echo("  draft brands.yaml:")
+    for line in report.draft_yaml().splitlines():
+        click.echo(f"    {line}")
+
+
 @main.command("compare-external")
 @click.option(
     "--theirs", "theirs_path", required=True, type=click.Path(exists=True, dir_okay=False)
@@ -488,18 +587,18 @@ def resolve(gtin: str, brand_key: str, verbose: bool, config_dir: Path, cache_di
     """Single-item debug resolve: master discovery + GTIN-anchored variation."""
     from bsb.fetch.cache import EanCache, HttpCache
     from bsb.fetch.ladder import PlaywrightSession, PoliteFetcher
-    from bsb.resolve.adapters.nars import NarsAdapter
+    from bsb.resolve.adapters.sfcc import SfccAdapter
 
     brands = load_brands(config_dir)
     brand_key = brand_key.lower()
     brand_cfg = brands.get(brand_key)
-    if not brand_cfg or brand_cfg.get("adapter") != "nars_sfcc":
+    if not brand_cfg or brand_cfg.get("adapter") not in ("nars_sfcc", "sfcc"):
         raise click.BadParameter(f"no adapter configured for brand {brand_key!r}")
 
     http_cache = HttpCache(cache_dir)
     fetcher = PoliteFetcher(http_cache)
     playwright = PlaywrightSession(http_cache, fetcher.limiter)
-    adapter = NarsAdapter(fetcher, brand_cfg, EanCache(cache_dir), playwright)
+    adapter = SfccAdapter(fetcher, brand_cfg, EanCache(cache_dir), playwright)
 
     try:
         master = adapter.discover_master(gtin)

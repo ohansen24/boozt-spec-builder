@@ -1,6 +1,7 @@
 # Per-brand configuration (build kit section 11). style_prefix doubles as
 # foreign-prefix knowledge for the style-number lint (regression case 1).
 nars:
+  boozt_code: QN
   display_name: NARS
   adapter: nars_sfcc
   domains: [narscosmetics.eu]
@@ -61,19 +62,83 @@ nars:
     domain: narscosmetics.eu
 
 svr:
+  boozt_code: VI
   display_name: SVR
   style_prefix: SVR
   gender_default: U
   country_iso: from_odm
 
 aesop:
+  boozt_code: EP
   display_name: Aesop - Labs
   style_prefix: AEOAES
   gender_default: U
   country_iso: from_odm
 
 olaplex:
+  boozt_code: OX
   display_name: Olaplex
   style_prefix: LAP # style numbers deviate from {prefix}{ean12}; pattern unconfirmed
   gender_default: U
   country_iso: from_odm
+
+# ---- Phase 2 expansion (probe-first; no bespoke code until an order exists).
+# domains are probe candidates, confirmed by `bsb probe-brand`.
+
+avene:
+  boozt_code: WG
+  display_name: "Avène"
+  gender_default: U
+  country_iso: from_odm
+  domains: [www.eau-thermale-avene.com]
+
+maria_nila:
+  boozt_code: NX
+  display_name: Maria Nila
+  gender_default: U
+  country_iso: from_odm
+  domains: [mariannila.com, marianila.com]
+
+marc_jacobs:
+  boozt_code: MJ
+  display_name: Marc Jacobs
+  gender_default: F
+  country_iso: from_odm
+  domains: [www.marcjacobsfragrances.com]
+  # fragrance: dangerous goods — MSDS module (kit 6.8) is a prerequisite
+  # before any order; brand site likely not EAN-addressable -> retailer-
+  # primary policy (green needs TWO independent retailer families)
+  dg_prerequisite: true
+
+k18:
+  boozt_code: KT
+  display_name: K18
+  gender_default: U
+  country_iso: from_odm
+  domains: [k18hair.com]
+
+benefit:
+  boozt_code: FT
+  display_name: Benefit
+  gender_default: F
+  country_iso: from_odm
+  domains: [www.benefitcosmetics.com]
+
+colorescience:
+  boozt_code: CSC
+  display_name: Colorescience
+  gender_default: U
+  country_iso: from_odm
+  domains: [www.colorescience.com]
+
+aderma:
+  boozt_code: DRM
+  display_name: A-Derma
+  gender_default: U
+  country_iso: from_odm
+  domains: [www.aderma.fr]
+
+soft_goat:
+  boozt_code: SOG
+  display_name: Soft Goat
+  out_of_scope: true # apparel: different Boozt template/guide — do not build
