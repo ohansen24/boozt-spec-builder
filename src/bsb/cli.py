@@ -503,6 +503,62 @@ def probe_brand_cmd(
         click.echo(f"    {line}")
 
 
+@main.command("golden")
+@click.option("--brand", "brand_key", required=True)
+@click.option("--limit", default=None, type=int, help="Compare only the first N rows")
+@click.option(
+    "--config",
+    "config_dir",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=DEFAULT_CONFIG_DIR,
+    show_default=True,
+)
+@click.option(
+    "--cache-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=Path("cache"),
+    show_default=True,
+)
+def golden_cmd(brand_key: str, limit: int | None, config_dir: Path, cache_dir: Path) -> None:
+    """Golden comparison: resolve offline from probe cache and diff
+    auto-fillable fields against Felina's finished sheet for this brand."""
+    from bsb.golden import golden_compare
+
+    brand_key = brand_key.lower()
+    if brand_key not in ANSWER_KEY_FIXTURES:
+        raise click.BadParameter(
+            f"no answer key for {brand_key!r}; have: {', '.join(ANSWER_KEY_FIXTURES)}"
+        )
+    brands = load_brands(config_dir)
+    synonyms = load_header_synonyms(config_dir)
+    result = golden_compare(
+        brand_key,
+        brands[brand_key],
+        ANSWER_KEY_FIXTURES[brand_key],
+        synonyms,
+        cache_dir,
+        limit=limit,
+    )
+    click.echo(f"GOLDEN {brand_key}: {result.resolved}/{result.rows} rows resolved")
+    for note in result.notes:
+        click.echo(f"  note: {note}")
+    for field, stats in result.fields.items():
+        if stats.comparable or stats.tool_missing or stats.theirs_missing:
+            click.echo(
+                f"  {field:12} agreement {stats.rate:6.1%} "
+                f"(agree {stats.agree} + format-only {stats.format_only} "
+                f"/ {stats.comparable} comparable; tool-missing {stats.tool_missing}, "
+                f"felina-missing {stats.theirs_missing})"
+            )
+    if result.disagreements:
+        click.echo(f"  disagreements ({len(result.disagreements)}):")
+        for d in result.disagreements[:20]:
+            click.echo(f"    {d}")
+    out = Path(f"data/out/golden_{brand_key}.json")
+    out.write_text(result.model_dump_json(indent=1))
+    click.echo(f"  report: {out}")
+
+
 @main.command("compare-external")
 @click.option(
     "--theirs", "theirs_path", required=True, type=click.Path(exists=True, dir_okay=False)

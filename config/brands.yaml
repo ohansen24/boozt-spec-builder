@@ -64,6 +64,7 @@ nars:
 svr:
   boozt_code: VI
   display_name: SVR
+  domains: [fr.svr.com]
   style_prefix: SVR
   gender_default: U
   country_iso: from_odm
@@ -71,6 +72,7 @@ svr:
 aesop:
   boozt_code: EP
   display_name: Aesop - Labs
+  domains: [www.aesop.com]
   style_prefix: AEOAES
   gender_default: U
   country_iso: from_odm
@@ -78,6 +80,13 @@ aesop:
 olaplex:
   boozt_code: OX
   display_name: Olaplex
+  domains: [olaplex.com]
+  # probe 2026-07-03: Shopify; products.json barcodes suppressed AND polluted
+  # with unpublished multi-market handles — resolution goes sitemap handles ->
+  # {handle}.js, where published products DO carry barcodes
+  adapter: shopify
+  shopify:
+    domain: olaplex.com
   style_prefix: LAP # style numbers deviate from {prefix}{ean12}; pattern unconfirmed
   gender_default: U
   country_iso: from_odm

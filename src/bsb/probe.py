@@ -79,7 +79,24 @@ def _detect_platform(fetcher: PoliteFetcher, domain: str, report: ProbeReport) -
     if match or "demandware.static" in home.text:
         report.platform = "sfcc"
         if match:
-            report.sfcc_controller_base = f"https://{domain}/on/demandware.store/Sites-{match.group(1)}-Site/{match.group(2)}/"
+            report.sfcc_controller_base = (
+                f"https://{domain}/on/demandware.store/"
+                f"Sites-{match.group(1)}-Site/{match.group(2)}/"
+            )
+        else:
+            # SFRA trick: /on/demandware.store/Sites-Site redirects into the
+            # default storefront, revealing the site id + locale
+            try:
+                redirected = fetcher.get(f"https://{domain}/on/demandware.store/Sites-Site")
+                hit = _SFCC_SITE.search(redirected.final_url) or _SFCC_SITE.search(redirected.text)
+                if hit:
+                    report.sfcc_controller_base = (
+                        f"https://{domain}/on/demandware.store/"
+                        f"Sites-{hit.group(1)}-Site/{hit.group(2)}/"
+                    )
+                    report.notes.append("controller base via Sites-Site redirect")
+            except FetchError as exc:
+                report.notes.append(f"Sites-Site discovery failed: {exc}")
         return home.text
 
     try:
@@ -127,6 +144,28 @@ def _probe_shopify(
         pass
 
     if samples:
+        # cheap precheck: if neither products.json nor a sampled {handle}.js
+        # carries ANY barcode, don't crawl the sitemap hunting for ours
+        if not stats.with_barcode:
+            handles = adapter.sitemap_handles(cap=3)
+            has_js_barcodes = False
+            for handle in handles[:2]:
+                try:
+                    pjs = fetcher.get(f"https://{domain}/products/{handle}.js")
+                    data = json.loads(pjs.text)
+                    if any(v.get("barcode") for v in data.get("variants") or []):
+                        has_js_barcodes = True
+                        break
+                except (FetchError, json.JSONDecodeError):
+                    continue
+            if not has_js_barcodes:
+                report.ean_addressable = "no"
+                report.ean_evidence = (
+                    "barcodes absent from products.json AND sampled {handle}.js — "
+                    "brand site not EAN-addressable"
+                )
+                report.samples_tested = len(samples)
+                return
         adapter._catalog = None  # full scan for real-EAN addressability
         hits = 0
         first_hit = None
@@ -148,6 +187,26 @@ def _probe_shopify(
             except FetchError:
                 pass
     else:
+        if not stats.with_barcode:
+            # merchants often suppress barcodes in products.json; {handle}.js
+            # sometimes still carries them
+            try:
+                page = fetcher.get(f"https://{domain}/products.json?limit=1&page=1")
+                products = json.loads(page.text).get("products") or []
+                if products and products[0].get("handle"):
+                    pjs = fetcher.get(f"https://{domain}/products/{products[0]['handle']}.js")
+                    data = json.loads(pjs.text)
+                    barcodes = [
+                        v.get("barcode") for v in data.get("variants") or [] if v.get("barcode")
+                    ]
+                    if barcodes:
+                        stats.with_barcode = len(barcodes)
+                        report.notes.append(
+                            f"barcodes hidden in products.json but present in {{handle}}.js "
+                            f"(sample: {barcodes[:2]})"
+                        )
+            except (FetchError, json.JSONDecodeError):
+                pass
         report.ean_addressable = "yes" if stats.with_barcode else "no"
         report.ean_evidence = "self-test: site's own variant barcodes are the anchor"
         if stats.sample_barcodes:
@@ -204,14 +263,20 @@ def _probe_unknown(
         except FetchError:
             continue
         locs = re.findall(r"<loc>([^<]+)</loc>", sm.text)
-        product_locs = [u for u in locs if re.search(r"/(product|produkt|p)/|\.html$", u)]
-        nested = [u for u in locs if u.endswith(".xml") and "product" in u]
-        if not product_locs and nested:
+        product_locs = [u for u in locs if re.search(r"/(products?|produkt|p)/|\.html$", u)]
+        nested = [u for u in locs if u.endswith(".xml")]
+        nested.sort(key=lambda u: ("product" not in u, u))  # product sitemaps first
+        for child in nested[:3]:
+            if product_locs:
+                break
             try:
-                sm2 = fetcher.get(nested[0])
-                product_locs = re.findall(r"<loc>([^<]+)</loc>", sm2.text)[:5]
+                sm2 = fetcher.get(child)
+                child_locs = re.findall(r"<loc>([^<]+)</loc>", sm2.text)
+                product_locs = [
+                    u for u in child_locs if re.search(r"/(products?|produkt|p)/|\.html$", u)
+                ][:5] or child_locs[:5]
             except FetchError:
-                pass
+                continue
         if product_locs:
             product_url = product_locs[0]
             break
@@ -270,11 +335,14 @@ def probe_brand(
         if html is None:
             continue
         report.fixtures.append(_save_fixture(fx, "homepage", html))
-        if report.platform == "shopify":
-            _probe_shopify(fetcher, domain, samples, report, fx)
-        elif report.platform == "sfcc":
-            _probe_sfcc(fetcher, samples, report, fx)
-        else:
-            _probe_unknown(fetcher, domain, samples, report, fx)
+        try:
+            if report.platform == "shopify":
+                _probe_shopify(fetcher, domain, samples, report, fx)
+            elif report.platform == "sfcc":
+                _probe_sfcc(fetcher, samples, report, fx)
+            else:
+                _probe_unknown(fetcher, domain, samples, report, fx)
+        except FetchError as exc:
+            report.notes.append(f"probe aborted: {exc}")
         break
     return report
