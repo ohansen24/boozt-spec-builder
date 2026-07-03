@@ -118,6 +118,12 @@ def extract_inci(html: str) -> str | None:
             text = " ".join(element.get_text(" ", strip=True).split())
             if text:
                 segments.append(text)
+        # nested <p> at any depth: the US layout wraps the INCI paragraph in a
+        # column div behind an <h3> marketing header — the bare <p> is cleaner
+        for element in inner.find_all("p"):
+            text = " ".join(element.get_text(" ", strip=True).split())
+            if text:
+                segments.append(text)
         loose = " ".join(" ".join(inner.find_all(string=True, recursive=False)).split())
         if loose:
             segments.append(loose)
@@ -125,7 +131,11 @@ def extract_inci(html: str) -> str | None:
         best, best_dots = None, 0
         for segment in segments:
             dots = _inci_separator_count(segment)
-            if dots > best_dots:
+            # strictly more separators wins; on a tie the shorter segment
+            # (fewer marketing headers joined in) wins
+            if dots > best_dots or (
+                dots == best_dots and best and dots and len(segment) < len(best)
+            ):
                 best, best_dots = segment, dots
         if best is not None and best_dots >= _MIN_INCI_DOTS:
             best = _INCI_LABEL.sub("", best)
