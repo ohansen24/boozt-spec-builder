@@ -65,7 +65,7 @@ def test_fill_colors_by_status(output, synonyms):
     assert hex_of("country_iso") == green  # ODM_SOURCED
     assert hex_of("purchase_price") == green  # ODM_SOURCED
     assert hex_of("category") == yellow  # SINGLE_SOURCE rule
-    assert hex_of("color_code") == red  # Orgasm QUAD: multi-shade, lexicon excluded
+    assert hex_of("color_code") == green  # Orgasm QUAD: palette rule 1016, confirmed
     assert hex_of("style_number") is None  # by-design blank: Boozt issues the prefix
     assert hex_of("style_name") == red  # NOT_FOUND (web source, Phase 1)
     assert hex_of("ingredients") == red

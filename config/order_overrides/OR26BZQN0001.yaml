@@ -19,3 +19,38 @@ overrides:
     rationale: >-
       Relaunched Laguna Bronzing Powder is the 11 g version (Felina: "not
       100% sure"); Lookfantastic still lists 8 g for these barcodes.
+  - field: size
+    eans: ["607845027621"]
+    value: 5.5 ml
+    status: VERIFIED
+    decided_by: Felina
+    date: 2026-07-03
+    rationale: >-
+      Powermatte Lip Pigment — US PDP publishes no size; Felina's manual
+      sheet and the ODM hint agree on 5.5 ml.
+  - field: size
+    eans: ["194251076379"]
+    value: 3 g
+    status: VERIFIED
+    decided_by: Felina
+    date: 2026-07-03
+    rationale: >-
+      Mini LR Setting Powder — site publishes no size; Felina's manual sheet
+      and the ODM hint agree on 3 g.
+  - field: color_name
+    eans: ["194251076379"]
+    value: Clear
+    status: VERIFIED
+    decided_by: Felina
+    date: 2026-07-03
+    rationale: >-
+      Mini pressed setting powder is colorless; Felina treats it as a
+      no-color row (her manual sheet) despite the ODM's "Pressed Mini -
+      Crystal" naming.
+  - field: color_code
+    eans: ["194251076379"]
+    value: "1017"
+    status: VERIFIED
+    decided_by: Felina
+    date: 2026-07-03
+    rationale: Colorless setting powder -> 1017 Clear (no-color standard).

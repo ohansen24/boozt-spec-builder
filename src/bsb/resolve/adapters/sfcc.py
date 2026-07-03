@@ -296,6 +296,11 @@ class SfccAdapter:
 
         selected_id = str(state.get("ID") or gtin13)
         size_match = _SIZE_DIV.search(fetch.text)
+        size_text = size_match.group(1).strip() if size_match else None
+        if size_text is None:
+            # some PDPs (LR Setting Mist) omit the size div but carry the
+            # value in the product state
+            size_text = str(state.get("size") or "").strip() or None
         selected_shade = str(state.get("color") or state.get("productColor") or "").strip() or None
         if selected_shade is None:
             selected_shade = shades.get(selected_id)
@@ -312,7 +317,7 @@ class SfccAdapter:
             selected_shade=selected_shade,
             shade_by_gtin=shades,
             color_val_by_gtin=color_val_by_gtin,
-            size_text=size_match.group(1).strip() if size_match else None,
+            size_text=size_text,
             inci_text=extract_inci(fetch.text),
             inci_selected_gtin=selected_id,
             region=region,
@@ -420,6 +425,8 @@ class SfccAdapter:
         result.product_name = str(state.get("name") or "")
         result.shade = shade
         result.size_text = size_match.group(1).strip() if size_match else None
+        if result.size_text is None:
+            result.size_text = str(state.get("size") or "").strip() or None
         result.snippet = f'"ID":"{returned_id}" … "color":"{shade}"'
 
         self.ean_cache.write(

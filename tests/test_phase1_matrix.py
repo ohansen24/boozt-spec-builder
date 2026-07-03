@@ -556,3 +556,45 @@ def test_inci_tokens_survive_embedded_newlines():
     a = "TALC · MICA · [+/-(MAY CONTAIN/PEUT CONTENIR): TITANIUM DIOXIDE (CI 77891)]"
     b = "Talc, Mica, May Contain/Peut Contenir/(+/-): Titanium Dioxide (Ci 77891)]\n\n"
     assert compare_inci(a, b) == ("identical", "")
+
+
+def test_no_color_standard_fills_clear_1017(rules):
+    assert rules["no_color_standard"]["color_name"] == "Clear"
+    assert rules["no_color_standard"]["color_code"] == 1017
+
+
+def test_multi_shade_default_1016(rules, brands):
+    from bsb.categorize.rules import color_code_for
+
+    decision = color_code_for(
+        "Makeup", "Orgasm", rules, brands["nars"], product_name="Eyeshadow Quad"
+    )
+    assert decision.code == 1016
+    assert decision.rule == "multi_shade_default"
+
+
+def test_felina_lexicon_entries(rules, brands):
+    from bsb.categorize.rules import color_code_for
+
+    nars = brands["nars"]
+    assert color_code_for("Makeup", "Explicit Black", rules, nars).code == 1012
+    assert color_code_for("Makeup", "Rebellion", rules, nars).code == 1010
+    assert color_code_for("Makeup", "Walk This Way", rules, nars).code == 1003
+    # quads still take the palette rule even though Orgasm is in the lexicon
+    assert (
+        color_code_for("Makeup", "Orgasm", rules, nars, product_name="Quad Eyeshadow").code == 1016
+    )
+
+
+def test_olaplex_name_replacements(brands):
+    from bsb.normalize.boozt import normalize_style_name
+
+    olaplex = brands["olaplex"]
+    assert (
+        normalize_style_name("Nº.5 LEAVE-IN MOISTURIZE & MEND LEAVE-IN CONDITIONER", olaplex)
+        == "No. 5 Leave-In Moisturize & Mend Leave-In Conditioner"
+    )
+    assert (
+        normalize_style_name("N°.5FINE BOND MAINTENANCE® CONDITIONER", olaplex)
+        == "No. 5Fine Bond Maintenance Conditioner"
+    )

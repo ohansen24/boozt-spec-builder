@@ -87,8 +87,11 @@ def color_code_for(
         return ColorCodeDecision(code=1017, rule="clear_category")
 
     if is_multi_shade_product(product_name, rules):
-        # fail closed with an explicit reason: needs Felina's product-type
-        # rule (dominant shade vs 1016 Multi-Colored), never a lexicon entry
+        # never the lexicon: one shade name, several colors. With a confirmed
+        # product-type rule the code ships; without one it fails closed.
+        default = cc_rules.get("multi_shade_default")
+        if default:
+            return ColorCodeDecision(code=int(default), rule="multi_shade_default")
         return ColorCodeDecision(rule="multi_shade_product")
 
     if shade:

@@ -39,3 +39,29 @@ def test_brand_for_order():
     assert brand_for_order("OR26RLGC0008", brands) is None  # not a BZ order
     assert brand_for_order(None, brands) is None
     assert brand_for_order("OR26BZZZ0001", brands) is None  # unknown code
+
+
+def test_portal_errors_collect_and_draft(tmp_path, synonyms):
+    from openpyxl import Workbook
+
+    from bsb.portal import collect_portal_errors, draft_overrides
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["EAN Code", "Brand", "Boozt Errors"])
+    ws.append(["194251140407", "NARS", "Invalid color code for category"])
+    ws.append(["194251140414", "NARS", None])
+    ws.append(["194251140421", "NARS", "Size format not accepted (4,8gr)"])
+    path = tmp_path / "returned.xlsx"
+    wb.save(path)
+
+    errors = collect_portal_errors(str(path), synonyms)
+    assert [e.ean for e in errors] == ["194251140407", "194251140421"]
+    assert errors[0].field_guess == "color_code"
+    assert errors[1].field_guess == "size"
+
+    draft = draft_overrides("OR26BZQN0001", errors, tmp_path)
+    text = draft.read_text()
+    assert "portal rejection: Invalid color code" in text
+    assert 'eans: ["194251140421"]' in text
+    assert "value: FIXME" in text  # never auto-applied

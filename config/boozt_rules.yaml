@@ -82,6 +82,7 @@ category_rules:
       - eye liner
       - brow
       - eyebrow
+      - setting mist # LR Setting Mist -> Makeup, confirmed Felina 2026-07-03
       - lip
       - lipstick
       - highlighter
@@ -137,21 +138,28 @@ color_code_rules:
   # curated lexicon is keyed (brand, shade) in brands.yaml.
   #
   # Multi-shade products (palettes, quads, shade sets) carry several colors
-  # under one shade name — the lexicon must never decide them. Detected by
-  # name marker; they fail closed to Felina. Her decision belongs HERE as a
-  # product-type rule (e.g. "palette -> dominant shade code" or
-  # "palette -> 1016 Multi-Colored"), never as a per-shade lexicon entry.
-  # Her old WIP coded the Orgasm quad 1003, so dominant-color may be her
-  # convention — pending confirmation:
-  # multi_shade_default: dominant   # or: 1016
+  # under one shade name — the lexicon never decides them. Confirmed Felina
+  # 2026-07-03 (session + her manual sheet): palettes take 1016 Multi-Colored.
+  multi_shade_default: 1016
+  multi_shade_note: confirmed Felina 2026-07-03 (manual sheet codes both quads 1016)
   multi_shade_markers:
     - quad
     - palette
     - trio
     - duo
 
-# Observed no-color conventions across finished sheets (open question 3:
-# which to standardize on). Mixed usage is a lint flag.
+# No-color standard (open question 3 CLOSED, confirmed Felina 2026-07-03):
+# shadeless rows ship Color Name "Clear" + code 1017. CAVEAT: legacy sheets
+# used CLEAR / NO COLOR / NO SHADE — the Boozt portal may still show the
+# legacy wording on previously uploaded items.
+no_color_standard:
+  color_name: Clear
+  color_code: 1017
+  note: confirmed Felina 2026-07-03; portal may show legacy wording (CLEAR/NO
+    COLOR/NO SHADE) on items uploaded before this standard
+
+# Observed no-color conventions across finished sheets. Mixed usage is a
+# lint flag.
 no_color_aliases:
   - CLEAR
   - NO COLOR

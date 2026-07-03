@@ -559,6 +559,40 @@ def golden_cmd(brand_key: str, limit: int | None, config_dir: Path, cache_dir: P
     click.echo(f"  report: {out}")
 
 
+@main.command("ingest-portal-errors")
+@click.option("--sheet", "sheet_path", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option("--order", "order_id", required=True)
+@click.option(
+    "--config",
+    "config_dir",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=DEFAULT_CONFIG_DIR,
+    show_default=True,
+)
+def ingest_portal_errors(sheet_path: str, order_id: str, config_dir: Path) -> None:
+    """Turn Boozt portal rejections (the 'Boozt Errors' column) into DRAFT
+    order overrides for review — the portal is the final QA stage and its
+    feedback compounds like everything else. Nothing is applied without a
+    human filling in the corrected values."""
+    from bsb.portal import collect_portal_errors, draft_overrides
+
+    synonyms = load_header_synonyms(config_dir)
+    errors = collect_portal_errors(sheet_path, synonyms)
+    if not errors:
+        click.echo("No portal errors found — nothing to draft.")
+        return
+    click.echo(f"{len(errors)} portal errors:")
+    for e in errors:
+        click.echo(f"  {e.ean} [{e.field_guess}] {e.error[:90]}")
+    path = draft_overrides(order_id, errors, config_dir / "order_overrides")
+    click.echo(f"\nDraft written: {path}")
+    click.echo(
+        "Review it, fill the FIXME values, merge accepted entries into "
+        f"config/order_overrides/{order_id}.yaml — recurring patterns belong "
+        "in rules/lexicon config instead."
+    )
+
+
 @main.command("compare-external")
 @click.option(
     "--theirs", "theirs_path", required=True, type=click.Path(exists=True, dir_okay=False)

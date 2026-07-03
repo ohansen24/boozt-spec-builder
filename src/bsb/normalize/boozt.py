@@ -158,6 +158,10 @@ def normalize_style_name(value: object, brand_cfg: dict | None = None) -> str | 
     cleaned = clean_ws(str(value))
     if not cleaned:
         return None
-    if ((brand_cfg or {}).get("name_format") or {}).get("title_case"):
+    fmt = (brand_cfg or {}).get("name_format") or {}
+    for rep in fmt.get("replacements") or []:
+        cleaned = cleaned.replace(str(rep.get("from", "")), str(rep.get("to", "")))
+    cleaned = " ".join(cleaned.split())
+    if fmt.get("title_case"):
         cleaned = _brand_title_case(cleaned)
     return cleaned or None

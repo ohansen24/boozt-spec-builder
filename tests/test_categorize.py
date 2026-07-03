@@ -88,8 +88,10 @@ def test_color_code_shade_lexicon_is_brand_scoped(rules, brands):
     assert color_code_for("Makeup", "Orgasm", rules, nars).code == 1003
     assert color_code_for("Makeup", "Laguna 03", rules, nars).code == 1010  # prefix entry
     assert color_code_for("Makeup", "Clear", rules, nars).code == 1017
-    # exact entries must not prefix-match: Orgasm X is NOT confirmed pink
-    assert color_code_for("Makeup", "Orgasm X", rules, nars).code is None
+    # Orgasm X now has its OWN confirmed entry (Felina 2026-07-03)
+    assert color_code_for("Makeup", "Orgasm X", rules, nars).code == 1003
+    # exact entries still never prefix-match an unconfirmed variant
+    assert color_code_for("Makeup", "Clear Glow", rules, nars).code is None
     # same shade name, different brand: no lexicon -> fail closed
     assert color_code_for("Makeup", "Orgasm", rules, brands["olaplex"]).code is None
     assert color_code_for("Makeup", "Orgasm", rules, None).code is None
@@ -97,12 +99,12 @@ def test_color_code_shade_lexicon_is_brand_scoped(rules, brands):
 
 def test_multi_shade_products_never_use_the_lexicon(rules, brands):
     """One shade name, several colors: the Orgasm QUAD must not inherit the
-    Orgasm blush's 1003 — fails closed to Felina's product-type rule."""
+    Orgasm blush's 1003 — it takes the confirmed palette rule (1016)."""
     nars = brands["nars"]
     for name in ("Eyeshadow Quad", "Quad Eyeshadow", "Some Palette", "Cheek Trio", "Lip Duo"):
         decision = color_code_for("Makeup", "Orgasm", rules, nars, product_name=name)
-        assert decision.code is None, name
-        assert decision.rule == "multi_shade_product"
+        assert decision.code == 1016, name
+        assert decision.rule == "multi_shade_default"  # never lexicon:orgasm
     # single-shade products with similar words are unaffected
     assert color_code_for("Makeup", "Orgasm", rules, nars, product_name="Powder Blush").code == 1003
     # "quadra"-like words must not trip the word-boundary marker
@@ -112,7 +114,8 @@ def test_multi_shade_products_never_use_the_lexicon(rules, brands):
 
 
 def test_color_code_fails_closed(rules, brands):
-    decision = color_code_for("Makeup", "Rebellion", rules, brands["nars"])
+    # a shade in nobody's lexicon (Rebellion joined it via Felina's codes)
+    decision = color_code_for("Makeup", "Zanzibar", rules, brands["nars"])
     assert decision.code is None
 
 

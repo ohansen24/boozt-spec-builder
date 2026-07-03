@@ -53,6 +53,68 @@ nars:
       match: prefix
     - shade: clear
       code: 1017
+    # from Felina's manual sheet (2026-07-03); quad rows excluded —
+    # their 1016 comes from the palette rule, never the lexicon
+    - shade: ablaze
+      code: 1015
+    - shade: aragón
+      code: 1003
+    - shade: behave
+      code: 1003
+    - shade: chelsea girls
+      code: 1003
+    - shade: cove
+      code: 1002
+    - shade: dazed
+      code: 1003
+    - shade: dolce vita
+      code: 1003
+    - shade: electra
+      code: 1015
+    - shade: eros
+      code: 1015
+    - shade: exhibit a
+      code: 1009
+    - shade: explicit black
+      code: 1012
+    - shade: faraway
+      code: 1003
+    - shade: fated
+      code: 1008
+    - shade: fierce
+      code: 1008
+    - shade: fling
+      code: 1003
+    - shade: heavenly
+      code: 1003
+    - shade: nympho
+      code: 1003
+    - shade: orgasm crave
+      code: 1003
+    - shade: orgasm edge
+      code: 1003
+    - shade: orgasm rush
+      code: 1003
+    - shade: orgasm x
+      code: 1003
+    - shade: rebellion
+      code: 1010
+    - shade: seafront
+      code: 1002
+    - shade: swing
+      code: 1003
+    - shade: thrill
+      code: 1003
+    - shade: turbo
+      code: 1003
+    - shade: twirl
+      code: 1003
+    - shade: unbroken
+      code: 1003
+    - shade: walk this way
+      code: 1003
+    - shade: wondrous
+      code: 1003
   us_fallback:
     controller_base: https://www.narscosmetics.com/on/demandware.store/Sites-nars_us-Site/en_US/
     note: US site fallback (same brand family, different region) — ships yellow
@@ -89,6 +151,15 @@ olaplex:
   boozt_code: OX
   display_name: Olaplex
   domains: [olaplex.com]
+  # name-normalization rules from the golden run (2026-07-03), ready before
+  # any Olaplex order: site publishes "Nº.5 … MOISTURIZE & MEND …®" style
+  name_format:
+    title_case: true
+    replacements:
+      - { from: "Nº.", to: "No. " }
+      - { from: "N°.", to: "No. " }
+      - { from: "®", to: "" }
+      - { from: "™", to: "" }
   # probe 2026-07-03: Shopify; products.json barcodes suppressed AND polluted
   # with unpublished multi-market handles — resolution goes sitemap handles ->
   # {handle}.js, where published products DO carry barcodes

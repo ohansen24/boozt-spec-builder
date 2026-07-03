@@ -158,8 +158,16 @@ def build_record(
 
 
 def _color_code_field(cc, rules: dict) -> FieldValue:
-    """Foundation-family 1018 is human-confirmed (green); other rule hits
-    stay yellow pending web/lexicon confirmation; undecided fails closed."""
+    """Foundation-family 1018 and the palette default are human-confirmed
+    (green); other rule hits stay yellow pending confirmation; undecided
+    fails closed."""
+    cc_rules = rules.get("color_code_rules") or {}
+    if cc.rule == "multi_shade_default" and cc_rules.get("multi_shade_note"):
+        return FieldValue(
+            value=str(cc.code),
+            status="VERIFIED",
+            notes=f"multi-shade product -> {cc.code}; {cc_rules['multi_shade_note']}",
+        )
     if cc.code is None:
         if cc.rule == "multi_shade_product":
             return FieldValue(
@@ -333,6 +341,7 @@ def apply_resolution(
         else None
     )
     rejected_validator_shade = False
+    no_color_code_settled = False
     if (
         site_shade is None
         and lf_shade is not None
@@ -364,11 +373,29 @@ def apply_resolution(
                     "asserts it — not a no-color row",
                 )
             else:
-                record.color_name = FieldValue(
-                    status="NOT_FOUND",
-                    primary=nars_ref,
-                    notes="no shade on brand site — no-color convention pending (open question 3)",
-                )
+                standard = rules.get("no_color_standard") or {}
+                if standard.get("color_name"):
+                    record.color_name = FieldValue(
+                        value=str(standard["color_name"]),
+                        status="VERIFIED",
+                        primary=nars_ref,
+                        notes="no shade on brand site — no-color standard; "
+                        + str(standard.get("note", "")),
+                    )
+                    if standard.get("color_code"):
+                        record.color_code = FieldValue(
+                            value=str(standard["color_code"]),
+                            status="VERIFIED",
+                            notes="no-color standard; " + str(standard.get("note", "")),
+                        )
+                        no_color_code_settled = True
+                else:
+                    record.color_name = FieldValue(
+                        status="NOT_FOUND",
+                        primary=nars_ref,
+                        notes="no shade on brand site — no-color convention pending "
+                        "(open question 3)",
+                    )
     else:
         record.color_name = combine_exact(
             "shade", site_shade, nars_ref, lf_shade, lf_ref, agree=shades_agree
@@ -469,10 +496,15 @@ def apply_resolution(
         )
 
     # --- color_code + flammable follow the final category
-    cc = color_code_for(
-        decision.category, site_shade or row.shade, rules, brand_cfg, site_name or row.base_name
-    )
-    record.color_code = _color_code_field(cc, rules)
+    if not no_color_code_settled:
+        cc = color_code_for(
+            decision.category,
+            site_shade or row.shade,
+            rules,
+            brand_cfg,
+            site_name or row.base_name,
+        )
+        record.color_code = _color_code_field(cc, rules)
 
     if decision.category in rules["dg_trigger_categories"]:
         record.flammable = FieldValue(
