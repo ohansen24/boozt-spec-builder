@@ -28,7 +28,7 @@ def _ref(url: str) -> SourceRef:
 
 NARS_CFG = {
     "display_name": "NARS",
-    "shade_format": {"strip_numeric_suffix": True, "title_case": True},
+    "shade_format": {"strip_shade_codes": True, "title_case": True},
     "name_format": {"title_case": True},
 }
 
@@ -39,9 +39,32 @@ class TestShadeNormalization:
         assert normalize_color_name("DEEP THROAT – 237", NARS_CFG) == "Deep Throat"
         assert normalize_color_name("CAFÉ CON LECHE – 154", NARS_CFG) == "Café Con Leche"
 
+    def test_prefix_forms_stripped(self):
+        """Oli's review find: EU lip PDPs prefix the shade code."""
+        assert normalize_color_name("888 DOLCE VITA", NARS_CFG) == "Dolce Vita"
+        assert normalize_color_name("777 - ORGASM", NARS_CFG) == "Orgasm"
+        assert normalize_color_name("500 - FARAWAY", NARS_CFG) == "Faraway"
+        assert normalize_color_name("507 - TWIRL", NARS_CFG) == "Twirl"
+        assert normalize_color_name("520 - WONDROUS", NARS_CFG) == "Wondrous"
+
+    def test_purely_numeric_shade_kept(self):
+        """No non-numeric name remains -> keep verbatim; such products get a
+        shade_format_overrides entry (the Laguna mechanism)."""
+        assert normalize_color_name("237", NARS_CFG) == "237"
+        assert normalize_color_name("777 - 237", NARS_CFG) == "777 - 237"
+
+    def test_laguna_numbers_survive_via_override(self):
+        cfg = dict(NARS_CFG)
+        cfg["shade_format_overrides"] = {
+            "laguna bronzing powder": {"number_template": "Laguna {number:02d}"}
+        }
+        assert (
+            normalize_color_name("Laguna 02", cfg, product_name="Laguna Bronzing Powder")
+            == "Laguna 02"
+        )
+
     def test_no_suffix_survives(self):
         assert normalize_color_name("ORGASM X", NARS_CFG) == "Orgasm X"
-        assert normalize_color_name("LAGUNA 01", NARS_CFG) == "Laguna 01"  # no dash: kept
 
     def test_without_brand_config_verbatim(self):
         assert normalize_color_name("ORGASM – 777") == "ORGASM – 777"

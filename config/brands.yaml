@@ -20,7 +20,10 @@ nars:
   # "ORGASM – 777" -> "Orgasm"; verbatim site string stays in provenance.
   # Formatting never downgrades a cell — identity follows the matrix.
   shade_format:
-    strip_numeric_suffix: true # drop trailing " – NNN" site suffix
+    # drop standalone numeric shade codes at either edge ("ORGASM – 777",
+    # "888 DOLCE VITA", "500 - FARAWAY" — EU site styling varies per line);
+    # purely numeric shades are kept and belong in shade_format_overrides
+    strip_shade_codes: true
     title_case: true # confirmed Felina 2026-07-03 ("Dolce Vita" style)
   # Product-level exceptions (confirmed Felina 2026-07-03): matched casefold
   # against the site product name; number_template rebuilds the shade from

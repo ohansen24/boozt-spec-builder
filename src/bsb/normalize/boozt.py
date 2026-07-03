@@ -64,7 +64,25 @@ def normalize_category(value: object, rules: dict) -> str | None:
     return None
 
 
-_NUMERIC_SUFFIX = re.compile(r"\s+[–—-]\s+\d+\s*$")  # noqa: RUF001 - site uses en dash
+# Standalone numeric shade-code tokens at either edge, separated by "-", "–",
+# or whitespace. The EU site styles these per product line: "ORGASM – 777"
+# (suffix), "888 DOLCE VITA" (prefix, space), "500 - FARAWAY" (prefix, dash).
+_SHADE_CODE_PREFIX = re.compile(r"^\d+(?:\s*[-–—]\s*|\s+)")  # noqa: RUF001 - site uses en dash
+_SHADE_CODE_SUFFIX = re.compile(r"(?:\s*[-–—]\s*|\s+)\d+\s*$")  # noqa: RUF001
+_HAS_LETTER = re.compile(r"[A-Za-zÀ-ÿ]")
+
+
+def _strip_shade_codes(text: str) -> str:
+    """Strip numeric shade codes from either edge — but only while a
+    non-numeric name remains. Purely numeric shades are kept verbatim and
+    belong in shade_format_overrides (the Laguna mechanism)."""
+    candidate = _SHADE_CODE_PREFIX.sub("", text).strip()
+    if _HAS_LETTER.search(candidate):
+        text = candidate
+    candidate = _SHADE_CODE_SUFFIX.sub("", text).strip()
+    if _HAS_LETTER.search(candidate):
+        text = candidate
+    return text
 
 
 def _brand_title_case(text: str) -> str:
@@ -124,8 +142,8 @@ def normalize_color_name(
                 return template.format(number=int(digits.group()))
             break  # matched product but no applicable rule -> default formatting
     fmt = (brand_cfg or {}).get("shade_format") or {}
-    if fmt.get("strip_numeric_suffix"):
-        cleaned = _NUMERIC_SUFFIX.sub("", cleaned).strip()
+    if fmt.get("strip_shade_codes") or fmt.get("strip_numeric_suffix"):  # old key honored
+        cleaned = _strip_shade_codes(cleaned)
     if fmt.get("title_case"):
         cleaned = _brand_title_case(cleaned)
     return cleaned or None
