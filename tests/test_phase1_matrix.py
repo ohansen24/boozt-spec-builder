@@ -385,3 +385,30 @@ def test_apply_order_overrides():
     assert record.size.primary.url == "config/order_overrides/OR26BZQN0001.yaml"
     assert "LF 8 g" in record.size.notes or "8 g" in record.size.notes
     assert "prior: CONFLICT" in record.size.notes
+
+
+def test_unparseable_partial_falls_back_to_self_anchoring_pdp():
+    """Live case: Powermatte Lip Pigment (US) — the variation partial has no
+    product state, but the master PDP anchors the requested GTIN itself."""
+
+    class NoStateAdapter(FakeAdapter):
+        def resolve_variant(self, master, gtin13):
+            return VariantResult(
+                gtin13=gtin13,
+                ean12=gtin13[1:],
+                ok=False,
+                master_id=master.master_id,
+                url="u",
+                returned_id=None,
+                reject_reason="no product-state object in variation partial",
+            )
+
+    master = _master({"0607845027621": "Walk This Way"})
+    master.selected_id = "0607845027621"
+    master.selected_shade = "Walk This Way"
+    odm = _odm([_row("607845027621", "Powermatte Lip Pigment - Walk This Way")])
+    result = resolve_order(odm, NoStateAdapter(master))
+    entry = result.by_ean["607845027621"]
+    assert entry.ok
+    assert entry.variant.shade == "Walk This Way"
+    assert not result.blocking_anomalies

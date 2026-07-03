@@ -172,6 +172,13 @@ def resolve_order(
             entry.variant = variant
             if variant.ok:
                 entry.ok = True
+            elif variant.returned_id is None and master.selected_id == row.gtin13:
+                # the variation partial served no product state, but the master
+                # PDP itself already self-anchors this exact GTIN (seen live:
+                # Powermatte Lip Pigment on the US site) — use the PDP evidence
+                entry.variant = adapter.variant_from_pdp(master)
+                entry.ok = True
+                progress(f"  ~ {row.ean12}: variation partial unparseable, PDP self-anchors")
             else:
                 entry.error = variant.reject_reason
                 if variant.returned_id is not None:
