@@ -548,3 +548,11 @@ def test_shade_from_title():
     assert shade_from_title("<title>Soft Matte Primer</title>", "Soft Matte Primer") is None
     assert shade_from_title("<title>Other Product | NARS</title>", "Climax Mascara") is None
     assert shade_from_title("no title here", "Climax Mascara") is None
+
+
+def test_inci_tokens_survive_embedded_newlines():
+    """Hand-filled cells embed newlines that shielded trailing brackets from
+    token cleaning, producing false INCI diffs in compare-external."""
+    a = "TALC · MICA · [+/-(MAY CONTAIN/PEUT CONTENIR): TITANIUM DIOXIDE (CI 77891)]"
+    b = "Talc, Mica, May Contain/Peut Contenir/(+/-): Titanium Dioxide (Ci 77891)]\n\n"
+    assert compare_inci(a, b) == ("identical", "")

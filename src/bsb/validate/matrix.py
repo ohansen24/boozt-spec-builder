@@ -16,9 +16,9 @@ from difflib import SequenceMatcher
 
 from bsb.models import FieldValue, SourceRef
 
-_MAY_CONTAIN = re.compile(
-    r"\[?\s*\+\s*/?-?\s*\(?\s*may contain|may contain/peut contenir", re.IGNORECASE
-)
+_MAY_CONTAIN_WORD = re.compile(r"may\s+contain", re.IGNORECASE)
+# trailing run of separator/prelude chars before the label ("· [+/-(" etc.)
+_MAY_CONTAIN_PRELUDE = re.compile(r"[\[\(\+/\-\s·•,;:]*$")
 _INCI_SPLIT = re.compile(r"\s*[·•,;]\s*")
 _PARENS = re.compile(r"\([^()]*\)")
 _SIZE_TOKEN = re.compile(r"\b\d+(?:\.\d+)?\s*(?:ml|g|pcs)\b", re.IGNORECASE)
@@ -180,16 +180,28 @@ def confirm_name(
 
 
 def split_inci(text: str) -> tuple[list[str], list[str]]:
-    """(base tokens, may-contain tokens), casefolded."""
-    match = _MAY_CONTAIN.search(text)
-    base_part = text[: match.start()] if match else text
-    may_part = text[match.start() :] if match else ""
-    may_part = re.sub(_MAY_CONTAIN, " ", may_part)
+    """(base tokens, may-contain tokens), casefolded. The may-contain label
+    varies wildly across sources ("[+/-(MAY CONTAIN/PEUT CONTENIR):",
+    "May Contain/Peut Contenir/(+/-):") — everything from the label's prelude
+    through its colon is consumed as marker, never as tokens."""
+    match = _MAY_CONTAIN_WORD.search(text)
+    if match is None:
+        base_part, may_part = text, ""
+    else:
+        prelude = _MAY_CONTAIN_PRELUDE.search(text[: match.start()])
+        base_part = text[: prelude.start()] if prelude else text[: match.start()]
+        rest = text[match.end() :]
+        colon = rest.find(":")
+        may_part = rest[colon + 1 :] if 0 <= colon <= 40 else rest
 
     def tokens(segment: str) -> list[str]:
         out = []
         for token in _INCI_SPLIT.split(segment):
-            cleaned = token.strip(" .[]():+/-·").casefold()
+            # collapse ALL whitespace (hand-filled cells embed newlines that
+            # otherwise shield trailing brackets from the strip); spacing
+            # around "/" is styling ("butylene/ ethylene" == "butylene/ethylene")
+            cleaned = " ".join(token.split()).replace(" / ", "/").replace("/ ", "/")
+            cleaned = cleaned.replace(" /", "/").strip(" .[]():+/-·").casefold()
             if cleaned:
                 out.append(cleaned)
         return out

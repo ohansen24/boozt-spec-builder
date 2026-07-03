@@ -405,6 +405,68 @@ def _print_summary(s: RunSummary) -> None:
         )
 
 
+@main.command("compare-external")
+@click.option(
+    "--theirs", "theirs_path", required=True, type=click.Path(exists=True, dir_okay=False)
+)
+@click.option("--order", "order_id", required=True)
+@click.option("--ours", "ours_path", type=click.Path(exists=True, dir_okay=False), default=None)
+@click.option("--out", "out_path", type=click.Path(dir_okay=False), default=None)
+@click.option(
+    "--config",
+    "config_dir",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=DEFAULT_CONFIG_DIR,
+    show_default=True,
+)
+def compare_external(
+    theirs_path: str,
+    order_id: str,
+    ours_path: str | None,
+    out_path: str | None,
+    config_dir: Path,
+) -> None:
+    """Diff an externally hand-filled sheet against the tool's output and
+    emit the review-session workbook. Nothing is ingested here: every
+    DISAGREE row needs a human Decision first."""
+    from bsb.compare import compare_sheets, write_comparison
+
+    ours_path = ours_path or f"data/out/{order_id}_review.xlsx"
+    out_path = out_path or f"data/out/comparison_{order_id}.xlsx"
+    synonyms = load_header_synonyms(config_dir)
+
+    result = compare_sheets(ours_path, theirs_path, synonyms)
+    write_comparison(result, out_path, ours_path, theirs_path)
+
+    pct = (result.agree / result.compared_cells * 100) if result.compared_cells else 0.0
+    click.echo(f"AGREEMENT: {result.agree} of {result.compared_cells} cells identical ({pct:.1f}%)")
+    counts: dict[str, int] = {}
+    for d in result.differences:
+        counts[d.classification] = counts.get(d.classification, 0) + 1
+    click.echo(
+        f"  DISAGREE {counts.get('DISAGREE', 0)} | FORMAT_ONLY {counts.get('FORMAT_ONLY', 0)} "
+        f"| FELINA_ONLY {counts.get('FELINA_ONLY', 0)} | TOOL_ONLY {counts.get('TOOL_ONLY', 0)} "
+        f"| whitespace-dirty cells in her file (normalized away): "
+        f"{result.theirs_whitespace_dirty}"
+    )
+    click.echo(f"Wrote {out_path}")
+
+    format_only = [d for d in result.differences if d.classification == "FORMAT_ONLY"]
+    if format_only:
+        click.echo(f"\nFORMAT_ONLY — surfaced, no decision required ({len(format_only)}):")
+        for d in format_only:
+            click.echo(f"  {d.ean} {d.field}: tool {d.ours!r} vs felina {d.theirs!r} [{d.note}]")
+
+    disagreements = result.disagreements
+    if disagreements:
+        click.echo(f"\nDISAGREE — session agenda ({len(disagreements)}):")
+        for d in disagreements:
+            note = f"   [{d.note}]" if d.note else ""
+            click.echo(f"  {d.ean} {d.field}: tool {d.ours!r} vs felina {d.theirs!r}{note}")
+            if d.provenance_url:
+                click.echo(f"      tool source: {d.provenance_url}")
+
+
 @main.command()
 @click.option("--gtin", required=True, help="GTIN-13 (0 + ODM ean12)")
 @click.option("--brand", "brand_key", required=True)
