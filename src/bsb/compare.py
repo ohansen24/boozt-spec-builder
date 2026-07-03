@@ -85,7 +85,8 @@ def _classify_values(field: str, ours: object, theirs: object) -> tuple[str, str
         return ("AGREE" if a == b else "DISAGREE"), ""
     if field == "color_code":
         try:
-            same = int(str(ours).strip()) == int(str(theirs).strip())
+            # spreadsheet cells arrive as int, float, or text
+            same = int(float(str(ours).strip())) == int(float(str(theirs).strip()))
             return ("AGREE" if same else "DISAGREE"), ""
         except ValueError:
             pass
