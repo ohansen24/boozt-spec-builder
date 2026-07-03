@@ -115,7 +115,11 @@ def extract_inci_from_html(html: str) -> InciCandidate | None:
         segment = flat[match.end() : match.end() + 4000]
         # stop at the next obvious section heading
         stop = re.search(
-            r"(?:How to use|Anwendung|Conseils|Avis|Reviews|Warnings)\b", segment, re.IGNORECASE
+            r"(?:How to use|Anwendung|Anwendungshinweise|Hinweis|Conseils|Avis|Reviews"
+            r"|Warnings|Utilisation|Précautions|La liste des ingrédients"
+            r"|The ingredient lists?)\b",
+            segment,
+            re.IGNORECASE,
         )
         if stop:
             segment = segment[: stop.start()]

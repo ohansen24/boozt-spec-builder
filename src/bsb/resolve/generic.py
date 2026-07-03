@@ -142,7 +142,9 @@ class GenericResolver:
             family = source_family(url)
             if family in seen_families:
                 continue
-            if len(hits) >= max_pages:
+            # budget counts ANCHORED hits: junk candidates must not exhaust
+            # the search before a usable source appears
+            if sum(1 for h in hits if h.gtin_anchored) >= max_pages:
                 break
             page = None
             try:

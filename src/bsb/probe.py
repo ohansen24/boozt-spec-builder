@@ -226,8 +226,24 @@ def _probe_shopify(
 
 
 def _probe_sfcc(fetcher: PoliteFetcher, samples: list[str], report: ProbeReport, fx: Path):
+    if not report.sfcc_controller_base and report.domain:
+        # homepage discovery failed: controller URLs usually appear on PDPs
+        for product_url in _product_locs_from_sitemaps(fetcher, report.domain)[:2]:
+            try:
+                pdp = fetcher.get(product_url)
+            except FetchError:
+                continue
+            hit = _SFCC_SITE.search(pdp.text)
+            if hit:
+                report.sfcc_controller_base = (
+                    f"https://{report.domain}/on/demandware.store/"
+                    f"Sites-{hit.group(1)}-Site/{hit.group(2)}/"
+                )
+                report.notes.append(f"controller base via sampled PDP ({product_url[:80]})")
+                report.fixtures.append(_save_fixture(fx, "sample_pdp", pdp.text))
+                break
     if not report.sfcc_controller_base:
-        report.notes.append("SFCC detected but no controller base found on homepage")
+        report.notes.append("SFCC detected but no controller base found on homepage or PDPs")
         return
     if not samples:
         report.ean_addressable = "untested"
@@ -252,68 +268,82 @@ def _probe_sfcc(fetcher: PoliteFetcher, samples: list[str], report: ProbeReport,
     report.ean_evidence = f"{hits}/{len(samples)} sample EANs self-anchored via Product-Show"
 
 
-def _probe_unknown(
-    fetcher: PoliteFetcher, domain: str, samples: list[str], report: ProbeReport, fx: Path
-):
-    """No platform match: JSON-LD GTIN presence on a sitemap-sampled page."""
-    product_url = None
+def _product_locs_from_sitemaps(fetcher: PoliteFetcher, domain: str) -> list[str]:
+    """Product-page URLs via sitemap descent. Junk-resistant: never the site
+    root, deepest paths preferred, product-ish patterns first."""
+
+    def plausible(url: str) -> bool:
+        path = re.sub(r"https?://[^/]+", "", url).strip("/")
+        return bool(path) and len(path) > 12 and not url.endswith(".xml")
+
     for sitemap in (f"https://{domain}/sitemap.xml", f"https://{domain}/sitemap_index.xml"):
         try:
             sm = fetcher.get(sitemap)
         except FetchError:
             continue
         locs = re.findall(r"<loc>([^<]+)</loc>", sm.text)
-        product_locs = [u for u in locs if re.search(r"/(products?|produkt|p)/|\.html$", u)]
         nested = [u for u in locs if u.endswith(".xml")]
-        nested.sort(key=lambda u: ("product" not in u, u))  # product sitemaps first
+        nested.sort(key=lambda u: ("produ" not in u, u))
+        pool = [u for u in locs if plausible(u)]
         for child in nested[:3]:
-            if product_locs:
-                break
             try:
-                sm2 = fetcher.get(child)
-                child_locs = re.findall(r"<loc>([^<]+)</loc>", sm2.text)
-                product_locs = [
-                    u for u in child_locs if re.search(r"/(products?|produkt|p)/|\.html$", u)
-                ][:5] or child_locs[:5]
+                sm2 = fetcher.get(child.replace("&amp;", "&"))
+                pool += [u for u in re.findall(r"<loc>([^<]+)</loc>", sm2.text) if plausible(u)]
             except FetchError:
                 continue
-        if product_locs:
-            product_url = product_locs[0]
-            break
-    if not product_url:
+        if pool:
+            producty = [u for u in pool if re.search(r"/(products?|produkt|p)/", u)]
+            rest = sorted((u for u in pool if u not in producty), key=lambda u: -u.count("/"))
+            return (producty + rest)[:5]
+    return []
+
+
+def _probe_unknown(
+    fetcher: PoliteFetcher, domain: str, samples: list[str], report: ProbeReport, fx: Path
+):
+    """No platform match: JSON-LD GTIN coverage across up to 3 sampled PDPs."""
+    locs = _product_locs_from_sitemaps(fetcher, domain)
+    if not locs:
         report.notes.append("no product URL found via sitemap")
         return
-    try:
-        pdp = fetcher.get(product_url)
-    except FetchError as exc:
-        report.notes.append(f"sample product page unreachable: {exc}")
-        return
-    report.fixtures.append(_save_fixture(fx, "sample_pdp", pdp.text))
-    products = parse_jsonld_products(pdp.text)
-    gtin_keys = [
-        key
-        for product in products
-        for key in ("gtin13", "gtin12", "gtin", "ean")
-        if product.get(key)
-    ]
-    if gtin_keys:
-        report.ean_evidence = (
-            f"JSON-LD carries {sorted(set(gtin_keys))} on sampled PDP ({product_url})"
+    sampled = 0
+    with_gtin = 0
+    first_pdp = None
+    for product_url in locs[:3]:
+        try:
+            pdp = fetcher.get(product_url)
+        except FetchError:
+            continue
+        sampled += 1
+        if first_pdp is None:
+            first_pdp = pdp
+            report.fixtures.append(_save_fixture(fx, "sample_pdp", pdp.text))
+        products = parse_jsonld_products(pdp.text)
+        gtin_keys = sorted(
+            {
+                key
+                for product in products
+                for key in ("gtin13", "gtin12", "gtin", "ean")
+                if product.get(key)
+            }
         )
-        report.ean_addressable = "partial"
-    else:
-        report.ean_evidence = f"no GTIN in JSON-LD on sampled PDP ({product_url})"
-        report.ean_addressable = "no"
-    _inci_check(pdp.text, report)
-
-    if samples:
-        hits = 0
-        for gtin in samples[:3]:
-            gtin13 = gtin if len(gtin) == 13 else "0" + gtin
-            if page_asserts_gtin(pdp.text, gtin13, products):
-                hits += 1
-        if hits:
-            report.notes.append(f"{hits} sample EAN(s) asserted on the sampled page")
+        if gtin_keys:
+            with_gtin += 1
+            report.notes.append(f"gtin keys {gtin_keys} on {product_url[:90]}")
+        if re.search(r"\d{12,13}", product_url):
+            report.notes.append(f"EAN embedded in PDP URL: {product_url[:90]}")
+        if samples:
+            for gtin in samples[:3]:
+                gtin13 = gtin if len(gtin) == 13 else "0" + gtin
+                if page_asserts_gtin(pdp.text, gtin13, products):
+                    report.notes.append(f"sample EAN {gtin13} asserted on sampled page")
+    if sampled == 0:
+        report.notes.append("sampled product pages unreachable")
+        return
+    report.ean_evidence = f"JSON-LD GTIN on {with_gtin}/{sampled} sampled PDPs"
+    report.ean_addressable = "partial" if with_gtin == sampled else "partial" if with_gtin else "no"
+    if first_pdp is not None:
+        _inci_check(first_pdp.text, report)
 
 
 def probe_brand(

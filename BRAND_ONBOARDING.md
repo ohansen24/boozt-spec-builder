@@ -84,3 +84,32 @@ rate above ~10%) block progression until reviewed.
 Hair/skin attribute columns (Hair type, Skin concerns, …) stay MANUAL this
 phase. The header mapper passes unknown headers through untouched — that
 behavior is load-bearing; never map them speculatively.
+
+
+## 5. Per-brand readiness (2026-07-03) — "can we take a Boozt order for X tomorrow?"
+
+Evidence: probes + goldens under `data/out/probe_*.json` / `golden_*.json`.
+"Golden" = agreement vs Felina's finished sheets on sampled EANs. INCI
+extraction runs only on GTIN-anchored pages; multi-language water naming is
+equivalent at compare time only.
+
+| Brand | Platform / path | Name | Size | Shade | INCI | First order still needs |
+|---|---|---|---|---|---|---|
+| **nars** | SFCC EU (+US, +archive) | ✅ verified | ✅ | ✅ lexicon+rules | ✅ brand PDPs | **production** — first order shipped clean |
+| **olaplex** | Shopify (sitemap→handle.js) | ✅ w/ name_format config | ✅ golden 100% | n/a (no-color std) | 🟡 in descriptions, vintage diffs | order-EAN coverage check; gates A–C |
+| **svr** | retailer-primary (generic) | 🟡 golden 27% — FR sources dominate, EN preferred when present | ✅ golden 100% | n/a (no-color std) | 🟡 ~20% coverage, quality varies by shop | INCI coverage lift (more families/EAN, pharmacy retailers); gates A–C |
+| **aesop** | retailer-primary (generic) | 🟡 golden 57% (mechanical cleanups known) | ✅ golden 100% | n/a | 🟡 ~27% coverage | DG prerequisite for fragrance lines (MSDS parked); gates A–C |
+| **aderma** | brand site via sitemap-EAN index (gtin on 3/3 PDPs, EAN in URL) | ✅ expected | ✅ expected | n/a likely | ✅ on PDPs | implement the sitemap-EAN index strategy (config-level); gates A–C |
+| **k18** | Shopify (handle.js barcodes) | ✅ expected | ✅ expected | n/a likely | ⚠️ not on site — retailer INCI needed | INCI source; gates A–C |
+| **colorescience** | Shopify (barcodes suppressed in products.json) | ✅ expected | ✅ expected | shades exist — axis check | ✅ on PDPs | handle.js barcode recheck with order EANs; gates A–C |
+| **maria_nila** | Shopify (barcodes suppressed-ish) | ✅ expected | ✅ expected | shades exist — axis check | ✅ on PDPs | handle.js barcode recheck; gates A–C |
+| **benefit** | SFCC, controllers hidden (homepage+PDP) | via retailers | via retailers | shades exist | unknown | live session capture of controller URLs, else retailer-primary; gates A–C |
+| **marc_jacobs** | SFCC, controller base FOUND, untested (no EANs held) | unknown | unknown | n/a | unknown | **blocked on MSDS module** (fragrance = DG); test Product-Show with first ODM EANs |
+| avene | retailer-primary (global site is a brochure; no product sitemap) | via retailers | via retailers | n/a | via retailers/pharmacy | locale-site probe (.fr) worth one retry; pharmacy validators unproven |
+| soft_goat | — | — | — | — | — | out of scope (apparel) |
+
+Cross-brand levers that raise every 🟡 at once: more anchored families per
+EAN in the generic resolver (cost: ~1 search + ~1 scrape per extra family),
+pharmacy retailer INCI (blocked on reachable pharmacy validators), and the
+key-gated LLM INCI isolator (evidence-substring rule) for pages the
+deterministic parser can't segment.
