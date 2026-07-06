@@ -695,6 +695,22 @@ def apply_resolution(
     site_size, size_conversion_note = convert_us_size(variant.size_text)
     lf_size = normalize_size(lf_product.size_text) if lf_variant and lf_product.size_text else None
     record.size = combine_exact("size", site_size, nars_ref, lf_size, lf_ref)
+    # brands whose PDP gives the exact per-variant volume (Benefit's SFCC size
+    # description) are authoritative — a retailer that lists a different size is
+    # usually a mislabelled full pack on a mini. Brand wins (yellow + note),
+    # never a conflict-to-red, per the brand-first hierarchy.
+    if (
+        record.size.status == "CONFLICT"
+        and site_size
+        and brand_cfg.get("size_brand_authoritative")
+    ):
+        record.size = FieldValue(
+            value=site_size,
+            status="SINGLE_SOURCE",
+            primary=nars_ref,
+            notes=f"brand-site per-variant volume authoritative; retailer size differs "
+            f"({lf_size!r}) — likely a mislabelled full pack, noted not conflicted",
+        )
     if size_conversion_note:
         # Boozt needs metric; a converted US size always ships yellow
         if record.size.status == "VERIFIED":

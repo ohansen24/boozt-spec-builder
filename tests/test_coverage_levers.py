@@ -90,3 +90,31 @@ def test_size_builder_from_field_and_title():
     fv = build_retailer_size_field([_h("x", "EU", name="Cool Cream, 300 ml")], _ref)
     assert fv.value == "300 ml" and fv.status == "SINGLE_SOURCE"
     assert build_retailer_size_field([_h("x", "EU", name="no size")], _ref) is None
+
+
+def test_brand_size_authoritative_beats_conflicting_retailer(brands, rules):
+    # brand per-variant volume vs a retailer's (wrong, full-pack) size: brand
+    # wins as yellow + note, never conflict-to-red (Oli brand-first hierarchy)
+    from bsb.ingest.odm import OdmRow
+    from bsb.models import ProductRecord
+    from bsb.pipeline import apply_resolution
+    from bsb.resolve.adapters.sfcc import MasterResult, VariantResult
+    from bsb.resolve.orchestrator import ResolvedEan
+    from bsb.resolve.validators import LfProduct, LfVariant
+
+    row = OdmRow(row_number=1, ean12="602004057280", gtin13="0602004057280",
+                 base_name="", shade=None, hints={})
+    rec = ProductRecord(ean12=row.ean12, gtin13=row.gtin13, brand="Benefit")
+    master = MasterResult(master_id="M", product_name="The POREfessional Mini",
+                          pdp_url="https://b/p", discovered_via_gtin=row.gtin13,
+                          selected_id="V", size_text="7.5 ml", region="EU")
+    variant = VariantResult(gtin13=row.gtin13, ean12=row.ean12, ok=True, master_id="M",
+                            url="https://b/p", product_name="The POREfessional Mini",
+                            size_text="7.5 ml")
+    resolved = ResolvedEan(ean12=row.ean12, gtin13=row.gtin13, ok=True,
+                           master=master, variant=variant)
+    lf = LfProduct(url="https://lf/p", product_name="The POREfessional 22ml",
+                   size_text="22 ml", by_barcode={row.ean12: LfVariant(barcode=row.ean12)})
+    apply_resolution(rec, row, resolved, brands["benefit"], rules, lf_product=lf)
+    assert rec.size.value == "7.5 ml" and rec.size.status == "SINGLE_SOURCE"
+    assert "authoritative" in rec.size.notes and "22 ml" in rec.size.notes

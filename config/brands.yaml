@@ -257,6 +257,11 @@ benefit:
   # retailer shade CONFIRM (agree -> green) but never CONFLICT the brand shade,
   # so format mismatches don't trip the validator conflict-rate stop.
   retailer_shade_confirms_only: true
+  # Benefit's SFCC PDP gives the exact per-variant volume (size description,
+  # e.g. Mini = "7.5 mL"); retailers often list the full pack size on a mini.
+  # Brand volume is authoritative -> a differing retailer size is noted, never
+  # conflicted to red (brand-first hierarchy).
+  size_brand_authoritative: true
   # Benefit shade names are proprietary marketing names ("1-Amaze 'Em (Fair
   # Neutral)") with no Boozt color-code mapping -> color_code fails closed to
   # Felina. No shade_lexicon by design — but when Felina fills Benefit color
