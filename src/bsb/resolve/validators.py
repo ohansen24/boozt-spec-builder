@@ -17,12 +17,14 @@ narscosmetics.eu/.co.uk/.com count as ONE source family; lookfantastic is
 an independent family, so agreement upgrades to VERIFIED.
 """
 
+import html as _html
 import re
 from datetime import datetime
 from urllib.parse import quote_plus
 
 from pydantic import BaseModel, Field
 
+from bsb.extract.inci import _TAGS, _leading_inci_run, inci_plausible
 from bsb.extract.structured import extract_json_array, parse_jsonld_products
 from bsb.fetch.cache import EanCache
 from bsb.fetch.ladder import FetchError, PlaywrightSession, PoliteFetcher
@@ -30,6 +32,23 @@ from bsb.fetch.ladder import FetchError, PlaywrightSession, PoliteFetcher
 LF_BASE = "https://www.lookfantastic.com"
 _LF_JUNK_PATHS = ("/p/beauty-box/", "/p/customer-gift-voucher/")
 _SIZE_IN_NAME = re.compile(r"(\d+(?:\.\d+)?)\s*(ml|g)\b", re.IGNORECASE)
+# LF serves INCI in a structured product-content field (Apollo state), keyed
+# "ingredients", value an HTML <p> — no inline "Ingredients:" label for the
+# generic extractor to anchor on, so parse it directly. The "ingredients" key
+# is itself the authoritative label -> plausibility runs labeled.
+_LF_INCI = re.compile(
+    r'"key"\s*:\s*"ingredients".*?"content"\s*:\s*"(<p>.*?</p>)"', re.DOTALL | re.IGNORECASE
+)
+
+
+def _lf_ingredients(html_text: str) -> str | None:
+    match = _LF_INCI.search(html_text)
+    if not match:
+        return None
+    text = _html.unescape(_TAGS.sub(" ", match.group(1)))
+    text = _leading_inci_run(" ".join(text.split())).strip().rstrip(",;· ")
+    ok, _ = inci_plausible(text, labeled=True)
+    return text if ok else None
 
 
 class LfVariant(BaseModel):
@@ -148,6 +167,7 @@ class LookfantasticValidator:
             product_name=name,
             size_text=f"{size_match.group(1)}{size_match.group(2).lower()}" if size_match else None,
             by_barcode=by_barcode,
+            inci_text=_lf_ingredients(html),
             from_cache=from_cache,
         )
 

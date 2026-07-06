@@ -336,11 +336,20 @@ def _run_resolved(
             click.echo(f"\nValidator pass over {len(rep_ean_by_master)} masters…")
             lf_tick = _Progress(len(rep_ean_by_master), "LF-validate", fetcher=fetcher)
             for master_id, (first_ean, master) in rep_ean_by_master.items():
-                product = lf.find_product(first_ean)
+                # a flaky LF search (Playwright net error, bot wall) must not
+                # kill the whole run — treat any per-master failure as no hit
+                try:
+                    product = lf.find_product(first_ean)
+                except Exception as exc:
+                    product = None
+                    click.echo(f"  LF {master.product_name[:36]}: error ({str(exc)[:50]}) — skip")
                 lf_by_master[master_id] = product
-                inci_by_master[master_id] = inci_weak.find_inci(
-                    str(brand_cfg.get("display_name", brand_key)), master.product_name
-                )
+                try:
+                    inci_by_master[master_id] = inci_weak.find_inci(
+                        str(brand_cfg.get("display_name", brand_key)), master.product_name
+                    )
+                except Exception:
+                    inci_by_master[master_id] = None
                 hit = f"{len(product.by_barcode)} barcodes @ {product.url}" if product else "no hit"
                 lf_tick(f"LF {master.product_name[:40]}: {hit}")
 

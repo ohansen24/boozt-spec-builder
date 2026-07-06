@@ -614,6 +614,17 @@ def apply_resolution(
             record.size.status = "SINGLE_SOURCE"
         record.size.notes += f"; ODM hint disagrees ({odm_size}) — downgraded per kit 6.5"
 
+    # a validator family (lookfantastic) that carries its own INCI is an
+    # independent GTIN-anchored retailer source — fold it into retailer_inci
+    # (with its market) when the generic pass supplied none, so it feeds the
+    # same corroboration + EU-market gate below.
+    if (retailer_inci is None or not retailer_inci[0]) and lf_product is not None:
+        lf_inci = getattr(lf_product, "inci_text", None)
+        if lf_inci:
+            from bsb.resolve.market import classify_market
+
+            retailer_inci = (lf_inci, lf_product.url, classify_market(lf_product.url))
+
     # --- ingredients: brand INCI (comma-space separators), weak support notes
     if master.inci_text:
         inci_boozt = (

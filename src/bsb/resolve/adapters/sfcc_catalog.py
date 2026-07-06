@@ -91,6 +91,16 @@ class SfccCatalogAdapter:
         self.ean_cache = ean_cache
         self.playwright = playwright
         self._index: dict[str, CatalogEntry] | None = None
+        # regional sibling storefronts on the same SFCC platform, tried for a
+        # variant whose shade the primary site no longer lists (discontinued).
+        # Same manufacturer -> brand authority, better than retailer-primary.
+        self.family_controllers = [
+            {
+                "market": str(c.get("market") or "?"),
+                "base": str(c["controller_base"]).rstrip("/") + "/",
+            }
+            for c in (brand_cfg.get("brand_family_controllers") or [])
+        ]
 
     # ---- stage 1: catalog crawl -> upc index ---------------------------------
 
@@ -232,6 +242,25 @@ class SfccCatalogAdapter:
                         return dv, True, False
         return None, True, True  # color axis present but shade not recoverable
 
+    def _family_shade(self, variant_code: str, referer: str) -> tuple[str | None, str | None]:
+        """A discontinued shade the primary site dropped may still be listed on
+        a regional sibling storefront. Retry Product-Variation for the SAME
+        variant code on each family controller; return (shade, market) from the
+        first that anchors (product.id == variant_code) with a selected color."""
+        for ctrl in self.family_controllers:
+            url = f"{ctrl['base']}Product-Variation?pid={quote(variant_code, safe='')}&quantity=1"
+            try:
+                fetch = self._get(url, referer=referer, ajax=True)
+                product = (json.loads(fetch.text) or {}).get("product") or {}
+            except (FetchError, json.JSONDecodeError):
+                continue
+            if str(product.get("id") or "") != variant_code:
+                continue
+            shade = self._selected(product, "color")
+            if shade:
+                return shade, ctrl["market"]
+        return None, None
+
     def resolve_variant(self, entry: CatalogEntry) -> VariantResult:
         """Product-Variation keyed by the variant code returns that exact
         variant's product-state; the selected color/size displayValues are the
@@ -272,12 +301,23 @@ class SfccCatalogAdapter:
         size_text = self._selected(product, "size")
         product_name = str(product.get("productName") or entry.product_name or "").strip()
 
+        family_market = None
+        if unresolved and self.family_controllers:
+            fam_shade, family_market = self._family_shade(entry.variant_code, entry.master_pdp_url)
+            if fam_shade:
+                shade, unresolved = fam_shade, False
+
         result.ok = True
         result.product_name = product_name
         result.shade = shade
         result.size_text = size_text
         result.shade_unresolved = unresolved
-        if unresolved:
+        if family_market and shade:
+            result.snippet = (
+                f'"id":"{returned_id}" (upc {entry.upc}) — shade off primary site (discontinued); '
+                f"recovered from {family_market} brand-family sibling: color {shade!r}"
+            )
+        elif unresolved:
             result.snippet = (
                 f'"id":"{returned_id}" (upc {entry.upc}) — color axis present but shade not in '
                 f"current swatch list (hex {entry.hex}); likely a discontinued shade"

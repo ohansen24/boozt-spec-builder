@@ -244,6 +244,14 @@ benefit:
   adapter: sfcc_catalog
   controller_base: https://www.benefitcosmetics.com/on/demandware.store/Sites-benco-uk-Site/en_GB/
   catalog_sitemap: https://www.benefitcosmetics.com/en-gb/sitemap_0-product.xml
+  # regional sibling storefronts on the same SFCC platform. A shade the UK site
+  # has dropped (discontinued) may still be listed on the DE site under the same
+  # variant code — brand authority, better than retailer. Probe 2026-07-06: the
+  # DE site (benco-de-Site) carried all 4 UK-discontinued order shades. EU
+  # market, so color_name ships single-source yellow.
+  brand_family_controllers:
+    - market: DE
+      controller_base: https://www.benefitcosmetics.com/on/demandware.store/Sites-benco-de-Site/de_DE/
   # Benefit shade names are proprietary marketing names ("1-Amaze 'Em (Fair
   # Neutral)") with no Boozt color-code mapping -> color_code fails closed to
   # Felina. No shade_lexicon by design.
