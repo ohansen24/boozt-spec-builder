@@ -83,7 +83,9 @@ def color_code_for(
             pending_confirmation=bool(cc_rules.get("foundation_family_pending")),
         )
 
-    if category in cc_rules["clear_categories"]:
+    if category in cc_rules["clear_categories"] and not (shade and shade.strip()):
+        # colorless skincare/hair care -> 1017; a shade-bearing item in these
+        # categories (Colour Refresh hair masks) must NOT be forced to Clear
         return ColorCodeDecision(code=1017, rule="clear_category")
 
     if is_multi_shade_product(product_name, rules):

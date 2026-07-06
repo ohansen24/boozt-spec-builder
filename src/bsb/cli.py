@@ -87,7 +87,7 @@ def run(
     rules = load_rules(config_dir)
     synonyms = load_header_synonyms(config_dir)
 
-    odm = parse_odm(odm_path)
+    odm = _ingest_order(odm_path, synonyms)
 
     if brand_key is None:
         from bsb.config import brand_for_order
@@ -177,21 +177,32 @@ def _run_resolved(
     from bsb.resolve.orchestrator import resolve_order
     from bsb.resolve.validators import IncidecoderWeak, LookfantasticValidator, cache_lf_hit
 
-    if brand_cfg.get("adapter") not in ("nars_sfcc", "sfcc"):
+    adapter_type = brand_cfg.get("adapter")
+    if adapter_type not in ("nars_sfcc", "sfcc", "shopify"):
         raise click.ClickException(
             f"--resolve: no resolve-capable adapter configured for brand {brand_key!r} "
-            f"(adapter={brand_cfg.get('adapter')!r})"
+            f"(adapter={adapter_type!r})"
         )
 
     http_cache = HttpCache(cache_dir)
     ean_cache = EanCache(cache_dir)
     fetcher = PoliteFetcher(http_cache)
     playwright = PlaywrightSession(http_cache, fetcher.limiter)
-    adapter = SfccAdapter(fetcher, brand_cfg, ean_cache, playwright)
 
     try:
-        click.echo(f"Resolving {len(odm.rows)} EANs master-first…")
-        resolution = resolve_order(odm, adapter, progress=lambda m: click.echo("  " + m))
+        if adapter_type == "shopify":
+            from bsb.resolve.adapters.shopify import ShopifyAdapter
+            from bsb.resolve.orchestrator import resolve_order_shopify
+
+            adapter = ShopifyAdapter(fetcher, brand_cfg, ean_cache)
+            click.echo(f"Resolving {len(odm.rows)} EANs (Shopify barcode anchor)…")
+            resolution = resolve_order_shopify(
+                odm, adapter, brand_cfg, progress=lambda m: click.echo("  " + m)
+            )
+        else:
+            adapter = SfccAdapter(fetcher, brand_cfg, ean_cache, playwright)
+            click.echo(f"Resolving {len(odm.rows)} EANs master-first…")
+            resolution = resolve_order(odm, adapter, progress=lambda m: click.echo("  " + m))
         counts = resolution.counts()
         click.echo(
             f"Resolve done: {counts['resolved_ok']}/{counts['eans']} ok, "
@@ -376,6 +387,17 @@ def _print_provenance_sample(records, n: int, rng) -> None:
         if fv.secondary:
             click.echo(f"      secondary {fv.secondary.url}")
         click.echo(f"      snippet   {fv.primary.snippet[:100]}")
+
+
+def _ingest_order(odm_path: str, synonyms: dict):
+    """Dispatch on input shape: a Buying Labs ODM (Barcode/Name/QTY header
+    block) vs a Boozt-template "Specs" sheet (EAN Code header in row 1)."""
+    from bsb.ingest.odm import parse_spec_sheet
+
+    try:
+        return parse_odm(odm_path)
+    except ValueError:
+        return parse_spec_sheet(odm_path, synonyms)
 
 
 def _print_summary(s: RunSummary) -> None:

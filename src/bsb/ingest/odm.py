@@ -206,3 +206,73 @@ def parse_odm(path: str | Path) -> OdmParseResult:
         issues=issues,
         length_profile=dict(Counter(len(r.ean12) for r in rows)),
     )
+
+
+_ORDER_IN_NAME = __import__("re").compile(r"OR\d{2}BZ[A-Z]+\d+", __import__("re").IGNORECASE)
+
+
+def parse_spec_sheet(path: str | Path, synonyms: dict) -> OdmParseResult:
+    """Ingest a Boozt-template-shaped "Specs" order (header in row 1, pre-seeded
+    with EAN + brand + country + price, no product Name/QTY). Unlike a Buying
+    Labs ODM there is no name to group on — base_name is empty and grouping
+    falls out of resolution. Country ISO / price / gender / expiry are carried
+    as hints exactly like ODM hints so the pipeline is unchanged downstream.
+    """
+    from bsb.ingest.template import read_sheet_rows
+
+    sheet_rows = read_sheet_rows(path, synonyms)
+    rows: list[OdmRow] = []
+    issues: list[str] = []
+    seen: dict[str, int] = {}
+    for record in sheet_rows:
+        raw = record.get("ean")
+        barcode = barcode_as_text(raw)
+        row_no = int(record.get("_row", 0))
+        if barcode is None or not barcode.isdigit():
+            issues.append(f"row {row_no}: unreadable EAN {raw!r}")
+            continue
+        if not gs1_check_digit_ok(barcode):
+            issues.append(f"row {row_no}: GS1 check digit failed for {barcode}")
+        if not check_ean_submission_form(barcode):
+            issues.append(
+                f"row {row_no}: EAN {barcode} not a valid submission form ({len(barcode)} digits)"
+            )
+        if barcode in seen:
+            issues.append(f"row {row_no}: duplicate EAN {barcode} (first at row {seen[barcode]})")
+        else:
+            seen[barcode] = row_no
+        # template country column is already ISO; carry as `coo` so the
+        # pipeline's ODM_SOURCED country_iso path works unchanged
+        hints = {
+            "coo": record.get("country_iso"),
+            "price": record.get("purchase_price"),
+            "gender": record.get("gender"),
+            "expiry": record.get("expiry_on_pack"),
+            "name": record.get("style_name"),  # usually blank on a spec sheet
+        }
+        hints = {k: (v.strip() if isinstance(v, str) else v) for k, v in hints.items()}
+        name = str(hints.get("name") or "")
+        base, shade = split_name(name)
+        rows.append(
+            OdmRow(
+                row_number=row_no,
+                ean12=barcode,
+                gtin13="0" + barcode if len(barcode) == 12 else barcode,
+                base_name=base,
+                shade=shade,
+                hints=hints,
+            )
+        )
+
+    order_number = None
+    m = _ORDER_IN_NAME.search(Path(path).name)
+    if m:
+        order_number = m.group(0).upper()
+
+    return OdmParseResult(
+        rows=rows,
+        header_row=1,
+        order_number=order_number,
+        issues=issues,
+        length_profile=dict(Counter(len(r.ean12) for r in rows)),
+    )

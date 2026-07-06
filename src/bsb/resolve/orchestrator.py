@@ -215,3 +215,78 @@ def resolve_order(
             result.by_ean[row.ean12] = entry
 
     return result
+
+
+def resolve_order_shopify(
+    odm: OdmParseResult,
+    adapter,  # ShopifyAdapter
+    progress: Callable[[str], None] = lambda _msg: None,
+) -> OrderResolution:
+    """Shopify resolution: each variant barcode == GTIN is its own anchor, so
+    there is no master-first shade grouping. Each hit is wrapped in the shared
+    MasterResult/VariantResult shape so apply_resolution is unchanged. INCI is
+    extracted deterministically from the product body_html (GTIN-anchored by
+    the barcode match). Colour-bearing lines (Maria Nila Colour Refresh) carry
+    a Color/Shade option axis; colorless hair care carries none."""
+    from bsb.extract.inci import extract_inci_from_html
+    from bsb.resolve.adapters.shopify import _SHADE_OPTIONS, _SIZE_OPTIONS
+
+    result = OrderResolution()
+    for row in odm.rows:
+        entry = ResolvedEan(ean12=row.ean12, gtin13=row.gtin13)
+        try:
+            hit = adapter.resolve_variant(row.gtin13)
+        except FetchError as exc:
+            entry.error = str(exc)
+            result.by_ean[row.ean12] = entry
+            progress(f"  ✗ {row.ean12}: {exc}")
+            continue
+        if not hit.ok:
+            entry.error = hit.reject_reason
+            result.master_failures.append(f"{row.ean12}: {hit.reject_reason}")
+            result.by_ean[row.ean12] = entry
+            progress(f"  ✗ {row.ean12}: {hit.reject_reason}")
+            continue
+
+        shade = next(
+            (v for k, v in hit.variant_options.items() if k.casefold() in _SHADE_OPTIONS), None
+        )
+        size_opt = next(
+            (v for k, v in hit.variant_options.items() if k.casefold() in _SIZE_OPTIONS), None
+        )
+        inci = extract_inci_from_html(hit.body_html) if hit.body_html else None
+        master = MasterResult(
+            master_id=hit.product_url or hit.gtin13,
+            product_name=hit.product_title or "",
+            pdp_url=hit.product_url or hit.url,
+            discovered_via_gtin=row.gtin13,
+            selected_id=row.gtin13,
+            selected_shade=shade,
+            size_text=size_opt or hit.size_text,
+            inci_text=inci.text if inci else None,
+            inci_selected_gtin=row.gtin13,
+            region="EU",
+        )
+        variant = VariantResult(
+            gtin13=row.gtin13,
+            ean12=row.ean12,
+            ok=True,
+            master_id=master.master_id,
+            url=hit.product_url or hit.url,
+            product_name=hit.product_title,
+            shade=shade,
+            size_text=size_opt or hit.size_text,
+            returned_id=row.gtin13,
+            snippet=f"shopify barcode {hit.barcode} == GTIN; variant {hit.variant_title!r}",
+        )
+        entry.ok = True
+        entry.master = master
+        entry.variant = variant
+        result.masters.setdefault(master.product_name or row.gtin13, master)
+        result.by_ean[row.ean12] = entry
+        progress(
+            f"● {row.ean12} -> {hit.product_title!r}"
+            + (f" [{shade}]" if shade else "")
+            + (" +INCI" if inci else "")
+        )
+    return result

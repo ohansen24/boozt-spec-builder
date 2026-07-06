@@ -60,6 +60,43 @@ color_codes:
 # biggest error surface (guide files foundations/concealers/tinted moisturizers
 # under "Foundation", not "Makeup").
 category_rules:
+  # hair first so "hair brush" beats makeup_tools "brush"; unambiguous hair
+  # terms only — bare mask/oil/spray/treatment stay out to preserve fail-closed
+  # cross-brand (a Maria Nila "Masque" resolves via the site name carrying
+  # "hair"/line context, verified at gate B)
+  hair_brushes:
+    category: Hair brushes
+    keywords:
+      - hair brush
+      - detangling brush
+      - paddle brush
+      - detangler
+  hair_care:
+    category: Hair care
+    keywords:
+      - shampoo
+      - conditioner
+      - conditioning
+      - hair mask
+      - hair masque
+      - hair oil
+      - hair treatment
+      - hair serum
+      - hair spray
+      - hairspray
+      - heat spray
+      - leave-in
+      - leave in
+      - dry shampoo
+      - scalp
+      - colour refresh
+      - color refresh
+      - masque
+      - hair mist
+      - styling
+      - mousse
+      - texture spray
+      - hair veil
   foundation_family:
     category: Foundation
     keywords:

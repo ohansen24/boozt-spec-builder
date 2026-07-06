@@ -14,6 +14,7 @@ region subpaths (/en-de/ etc.) are honored when configured as path_prefix.
 """
 
 import json
+import re
 
 from pydantic import BaseModel, Field
 
@@ -44,6 +45,56 @@ class ShopifyVariantHit(BaseModel):
 
 _SHADE_OPTIONS = {"color", "colour", "shade", "farbe"}
 _SIZE_OPTIONS = {"size", "größe", "grösse", "volume"}
+
+
+_SLUG_SIZE = re.compile(r"-(\d+)-(ml|g)\b")
+_TITLE_SIZE = re.compile(r"\b(\d+(?:\.\d+)?)\s*(ml|g)\b", re.IGNORECASE)
+
+
+def parse_shopify_title(
+    title: str, url: str, brand_cfg: dict
+) -> tuple[str, str | None, str | None]:
+    """(style_name, shade, size) from a Shopify product title + URL slug.
+
+    - shade: for configured shade-bearing lines (Maria Nila Colour Refresh),
+      the title tail after the line prefix, minus a size-word suffix.
+    - size: URL slug "-300-ml" first, then a number in the title, then a
+      configured size word ("Travel" -> 100 ml).
+    - style_name: title minus a trailing size number and size words.
+    """
+    title = " ".join(str(title or "").split())
+    size = None
+    slug = _SLUG_SIZE.search(url or "")
+    if slug:
+        size = f"{int(slug.group(1))} {slug.group(2).lower()}"
+    elif m := _TITLE_SIZE.search(title):
+        size = f"{m.group(1)} {m.group(2).lower()}"
+
+    size_words = {k.lower(): v for k, v in (brand_cfg.get("size_word_ml") or {}).items()}
+    trailing_word = None
+    tokens = title.split()
+    if tokens and tokens[-1].lower() in size_words:
+        trailing_word = tokens[-1]
+        if size is None:
+            size = f"{size_words[tokens[-1].lower()]} ml"
+
+    shade = None
+    style = title
+    for prefix in brand_cfg.get("shade_from_name") or []:
+        if title.lower().startswith(prefix.lower()):
+            remainder = title[len(prefix) :].strip()
+            if trailing_word:
+                remainder = remainder[: remainder.lower().rfind(trailing_word.lower())].strip()
+            shade = remainder or None
+            style = prefix
+            break
+
+    if shade is None:
+        # strip a trailing size word and any "NNN ml/g" from the style name
+        if trailing_word:
+            style = style[: style.lower().rfind(trailing_word.lower())].strip()
+        style = _TITLE_SIZE.sub("", style).strip(" -,")  # noqa: RUF001
+    return style or title, shade, size
 
 
 def variant_axes(product: dict, variant: dict) -> dict[str, str]:
@@ -89,20 +140,18 @@ class ShopifyAdapter:
         """Published product handles from the product sitemap — the public
         catalog often contains unpublished multi-market handles that 404 on
         {handle}.js, while the sitemap lists what actually resolves."""
-        import re as _re
-
         try:
             sm = self.fetcher.get(f"{self.base}/sitemap.xml")
         except FetchError:
             return []
-        children = _re.findall(r"<loc>([^<]+sitemap_products[^<]*)</loc>", sm.text)
+        children = re.findall(r"<loc>([^<]+sitemap_products[^<]*)</loc>", sm.text)
         handles: list[str] = []
         for child in children[:1]:  # main-locale product sitemap
             try:
                 sm2 = self.fetcher.get(child.replace("&amp;", "&"))
             except FetchError:
                 continue
-            for url in _re.findall(r"<loc>([^<]+/products/([^<#?]+))</loc>", sm2.text):
+            for url in re.findall(r"<loc>([^<]+/products/([^<#?]+))</loc>", sm2.text):
                 handle = url[1].strip("/")
                 if handle not in handles:
                     handles.append(handle)

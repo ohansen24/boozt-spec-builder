@@ -185,7 +185,23 @@ maria_nila:
   display_name: Maria Nila
   gender_default: U
   country_iso: from_odm
-  domains: [mariannila.com, marianila.com]
+  domains: [marianila.com]
+  # probe 2026-07-06 with real order EANs: Shopify, barcodes suppressed in
+  # products.json but present in {handle}.js — 5/5 order EANs matched.
+  adapter: shopify
+  shopify:
+    domain: marianila.com
+  # shade-bearing hair lines: the colour IS a separate product, shade lives
+  # in the title after the line prefix (Shopify variant axis is Default Title)
+  shade_from_name:
+    - "Colour Refresh"
+    - "Color Refresh"
+  # packaging-size title suffixes -> ml (the slug carries the number; these
+  # bare words map to Maria Nila's standard fills)
+  size_word_ml:
+    liter: 1000
+    litre: 1000
+    travel: 100
 
 marc_jacobs:
   boozt_code: MJ
