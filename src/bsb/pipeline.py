@@ -143,7 +143,19 @@ def build_record(
     else:
         record.extras["purchase_price"] = FieldValue(status="NOT_FOUND", notes="no ODM price")
     expiry_default = brand_cfg.get("expiry_on_pack_default") or {}
-    if expiry_default.get("value"):
+    expiry_provided = hints.get("expiry")
+    if expiry_provided not in (None, ""):
+        # a Boozt "Specs" order sheet arrives with expiry pre-filled — honor
+        # the provided value rather than dropping it to red
+        record.extras["expiry_on_pack"] = FieldValue(
+            value=str(expiry_provided).strip(),
+            status="ODM_SOURCED",
+            primary=_odm_ref(
+                odm_path, f"expiry={expiry_provided} (row {row.row_number})", fetched_at
+            ),
+            notes="provided in the order sheet",
+        )
+    elif expiry_default.get("value"):
         record.extras["expiry_on_pack"] = FieldValue(
             value=str(expiry_default["value"]),
             status="VERIFIED",

@@ -103,7 +103,7 @@ equivalent at compare time only.
 | **k18** | Shopify (handle.js barcodes) | ✅ expected | ✅ expected | n/a likely | ⚠️ not on site — retailer INCI needed | INCI source; gates A–C |
 | **colorescience** | Shopify (barcodes suppressed in products.json) | ✅ expected | ✅ expected | shades exist — axis check | ✅ on PDPs | handle.js barcode recheck with order EANs; gates A–C |
 | **maria_nila** | Shopify (barcodes suppressed-ish) | ✅ expected | ✅ expected | shades exist — axis check | ✅ on PDPs | handle.js barcode recheck; gates A–C |
-| **benefit** | SFCC, controllers hidden (homepage+PDP) | via retailers | via retailers | shades exist | unknown | live session capture of controller URLs, else retailer-primary; gates A–C |
+| **benefit** | SFRA, controller URL-rewritten; keyed by internal style code (BM252/WHOA), GTIN absent from JSON-LD | ⛔ not EAN-addressable as-is | — | — | — | **STOPPED at capture decision (OR26BZFT0001)**: needs DevTools capture (controller base + EAN→variant-code map) like NARS, OR authorize retailer-primary |
 | **marc_jacobs** | SFCC, controller base FOUND, untested (no EANs held) | unknown | unknown | n/a | unknown | **blocked on MSDS module** (fragrance = DG); test Product-Show with first ODM EANs |
 | avene | retailer-primary (global site is a brochure; no product sitemap) | via retailers | via retailers | n/a | via retailers/pharmacy | locale-site probe (.fr) worth one retry; pharmacy validators unproven |
 | soft_goat | — | — | — | — | — | out of scope (apparel) |
