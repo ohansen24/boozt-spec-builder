@@ -219,6 +219,19 @@ class SfccCatalogAdapter:
         return None
 
     @classmethod
+    def _selected_hex(cls, product: dict) -> str | None:
+        """The selected color value's `value` — a hex on Benefit's swatch axes
+        (e.g. 'F6DECE'). Feeds the Stage 2 swatch-hex color-code proposer."""
+        attr = cls._attr(product, "color")
+        if attr is None:
+            return None
+        for val in attr.get("values") or []:
+            if val.get("selected"):
+                v = str(val.get("value") or "").strip()
+                return v if re.fullmatch(r"[0-9a-fA-F]{6}", v) else None
+        return None
+
+    @classmethod
     def _shade(cls, product: dict, hex_hint: str | None) -> tuple[str | None, bool, bool]:
         """Resolve the shade for a variant. Returns
         (shade, has_color_axis, unresolved). ``Product-Variation?pid=variant``
@@ -312,6 +325,7 @@ class SfccCatalogAdapter:
         result.shade = shade
         result.size_text = size_text
         result.shade_unresolved = unresolved
+        result.swatch_hex = self._selected_hex(product) or entry.hex  # Stage 2 signal
         if family_market and shade:
             result.snippet = (
                 f'"id":"{returned_id}" (upc {entry.upc}) — shade off primary site (discontinued); '

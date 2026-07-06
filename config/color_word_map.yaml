@@ -21,7 +21,35 @@
 #
 # NEVER proposes 1016 Multi-Colored, 1017 Clear, 1018 Natural (meta-codes).
 
-version: 1
+version: 2
+
+# Stage 2: representative sRGB hex per CHROMATIC anchor, for the swatch-hex ->
+# nearest-anchor proposer (perceptual CIELAB ΔE). Deliberately excludes the
+# meta-codes 1016 Multi / 1017 Clear / 1018 Natural — hex never proposes those.
+# Used as the SECOND signal: agrees-with-word -> stronger proposal; disagrees
+# -> no proposal (both shown, red); hex-only -> lower-confidence proposal.
+anchors_hex:
+  1001: FFFDD0  # Cream
+  1002: F5F5DC  # Beige
+  1003: FFC0CB  # Pink
+  1004: 1F4FFF  # Blue
+  1005: 2E8B57  # Green
+  1006: FFEB3B  # Yellow
+  1007: FF8C00  # Orange
+  1008: 8E4585  # Purple
+  1009: E0242B  # Red
+  1010: 8B5A2B  # Brown
+  1011: 808080  # Grey
+  1012: 1A1A1A  # Black
+  1013: FFFFFF  # White
+  1014: C0C0C0  # Silver
+  1015: D4AF37  # Gold
+  1019: 1B2A4A  # Navy
+  1020: 7C7B4E  # Khaki green
+  1021: FF7F50  # Coral
+  1022: 7B1E3B  # Burgundy
+
+version_note: v2 adds anchors_hex for the Stage 2 swatch-hex proposer
 
 # undertone / finish / intensity words — ignored (not anchors)
 modifiers:

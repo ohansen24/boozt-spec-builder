@@ -273,6 +273,7 @@ def resolve_order_sfcc_catalog(
             selected_shade=variant.shade,
             size_text=variant.size_text,
             site_category_id=catalog_entry.site_category_id,
+            swatch_hex=variant.swatch_hex,
             region="EU",
         )
         resolved.ok = True

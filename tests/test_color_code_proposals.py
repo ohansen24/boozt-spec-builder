@@ -73,3 +73,53 @@ def test_empty_or_none_shade_no_proposal():
     assert propose_color_code_from_words("", WM).code is None
     assert propose_color_code_from_words(None, WM).code is None
     assert propose_color_code_from_words("Rebel Brown", None).code is None  # no map -> no crash
+
+
+# ---- Stage 2: swatch-hex -> anchor (perceptual ΔE) + two-signal ----------
+
+from bsb.categorize.rules import (  # noqa: E402
+    combine_color_proposals,
+    propose_color_code_from_hex,
+)
+
+AH = WM.get("anchors_hex")
+
+
+def test_hex_maps_to_nearest_anchor():
+    for hx, code in [("1A1A1A", 1012), ("E0242B", 1009), ("D4AF37", 1015),
+                     ("FFC0CB", 1003), ("8E4585", 1008)]:
+        d = propose_color_code_from_hex(hx, AH)
+        assert d.code == code and d.proposal, hx
+
+
+def test_hex_never_proposes_meta_codes():
+    # anchors_hex excludes 1016/1017/1018 by construction
+    for code in (1016, 1017, 1018):
+        assert code not in AH
+
+
+def test_hex_malformed_no_proposal():
+    for bad in [None, "", "ZZZ", "12345", "#12"]:
+        assert propose_color_code_from_hex(bad, AH).code is None
+
+
+def test_two_signals_agree_strengthens():
+    w = propose_color_code_from_words("Wild Plum", WM)      # 1008
+    h = propose_color_code_from_hex("8E4585", AH)           # purple -> 1008
+    c = combine_color_proposals(w, h)
+    assert c.code == 1008 and c.proposal and "two_signals_agree" in c.rule
+
+
+def test_two_signals_disagree_withholds():
+    w = propose_color_code_from_words("Wild Plum", WM)      # 1008 purple
+    h = propose_color_code_from_hex("8C3A3A", AH)           # dark red-brown
+    c = combine_color_proposals(w, h)
+    assert c.code is None and c.rule.startswith("signals_disagree")
+
+
+def test_hex_only_proposes_lower_confidence():
+    # opaque name (no colour word) + a hex -> hex-only proposal
+    w = propose_color_code_from_words("Hoola", WM)
+    h = propose_color_code_from_hex("8B5A2B", AH)           # brown
+    c = combine_color_proposals(w, h)
+    assert w.code is None and c.code == h.code and "swatch_hex" in c.rule

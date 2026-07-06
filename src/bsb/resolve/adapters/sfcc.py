@@ -66,6 +66,7 @@ class MasterResult(BaseModel):
     # datalayer categoryID (e.g. Benefit "concealer"), mapped to a Boozt
     # category via brand_cfg.site_category_map. None for name-only adapters.
     site_category_id: str | None = None
+    swatch_hex: str | None = None  # selected shade's swatch hex (Stage 2 color-code)
     fetched_at: datetime | None = None
     from_cache: bool = False
 
@@ -86,6 +87,7 @@ class VariantResult(BaseModel):
     returned_id: str | None = None
     reject_reason: str | None = None
     snippet: str = ""
+    swatch_hex: str | None = None  # selected shade's swatch hex (Stage 2 color-code)
     # True when the product HAS a color axis but the shade could not be
     # resolved (e.g. a discontinued shade no longer in the master's swatch
     # list). Distinguishes "shade-bearing but unresolved" (fail closed to red,

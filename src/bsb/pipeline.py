@@ -188,6 +188,12 @@ def _color_code_field(cc, rules: dict) -> FieldValue:
                 notes="multi-shade product (quad/palette) — shade lexicon not applicable; "
                 "needs Felina's product-type rule (dominant shade vs 1016 Multi-Colored)",
             )
+        if cc.rule and cc.rule.startswith("signals_disagree"):
+            # word and swatch-hex disagree -> withhold proposal, show both, red
+            return FieldValue(
+                status="NOT_FOUND",
+                notes=f"color-code signals disagree ({cc.rule}) — needs human decision",
+            )
         return FieldValue(status="NOT_FOUND", notes="no color-code rule matched — fail closed")
     confirmed_note = (rules.get("color_code_rules") or {}).get("foundation_family_note")
     if cc.rule == "foundation_family" and not cc.pending_confirmation and confirmed_note:
@@ -842,6 +848,7 @@ def apply_resolution(
             rules,
             brand_cfg,
             site_name or row.base_name,
+            swatch_hex=getattr(master, "swatch_hex", None),
         )
         record.color_code = _color_code_field(cc, rules)
 
