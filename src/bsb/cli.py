@@ -223,28 +223,32 @@ def _run_resolved(
         if resolution.swatch_warnings:
             run_meta["swatch warnings"] = " | ".join(resolution.swatch_warnings)
 
-        lf_by_base: dict = {}
-        inci_by_base: dict = {}
+        # key validators by the RESOLVED master id, not base_name — spec-sheet
+        # (Shopify) orders have no ODM name to group on, so base_name is empty
+        lf_by_master: dict = {}
+        inci_by_master: dict = {}
+        rep_ean_by_master: dict = {}
+        for ean, res in resolution.by_ean.items():
+            if res.ok and res.master is not None:
+                rep_ean_by_master.setdefault(res.master.master_id, (ean, res.master))
         if do_validate:
             lf = LookfantasticValidator(fetcher, playwright)
             inci_weak = IncidecoderWeak(fetcher)
-            click.echo(f"\nValidator pass over {len(resolution.masters)} masters…")
-            for base, master in resolution.masters.items():
-                first_ean = next(r.ean12 for r in odm.rows if r.base_name == base)
+            click.echo(f"\nValidator pass over {len(rep_ean_by_master)} masters…")
+            for master_id, (first_ean, master) in rep_ean_by_master.items():
                 product = lf.find_product(first_ean)
-                lf_by_base[base] = product
+                lf_by_master[master_id] = product
                 click.echo(
-                    f"  LF {base}: "
+                    f"  LF {master.product_name[:40]}: "
                     + (
                         f"{len(product.by_barcode)} barcodes @ {product.url}"
                         if product
                         else "no hit"
                     )
                 )
-                weak = inci_weak.find_inci(
+                inci_by_master[master_id] = inci_weak.find_inci(
                     str(brand_cfg.get("display_name", brand_key)), master.product_name
                 )
-                inci_by_base[base] = weak
 
         conflict_cells = 0
         compared_cells = 0
@@ -253,8 +257,9 @@ def _run_resolved(
         for record in records:
             row = by_ean_row[record.ean12]
             resolved = resolution.by_ean.get(record.ean12)
-            lf_product = lf_by_base.get(row.base_name)
-            weak = inci_by_base.get(row.base_name)
+            master_id = resolved.master.master_id if (resolved and resolved.master) else None
+            lf_product = lf_by_master.get(master_id)
+            weak = inci_by_master.get(master_id)
             size_anomalies += apply_resolution(
                 record, row, resolved, brand_cfg, rules, lf_product, weak
             )
@@ -309,7 +314,7 @@ def _run_resolved(
             raise SystemExit(2)
 
         if show_variants:
-            _print_variant_tables(resolution, lf_by_base, odm)
+            _print_variant_tables(resolution, lf_by_master, odm)
 
         shade_fmt = brand_cfg.get("shade_format") or {}
         if shade_fmt.get("pending_note"):
@@ -331,10 +336,10 @@ def _run_resolved(
         playwright.close()
 
 
-def _print_variant_tables(resolution, lf_by_base, odm) -> None:
+def _print_variant_tables(resolution, lf_by_master, odm) -> None:
     click.echo("\n=== per-master variant tables ===")
     for base, master in resolution.masters.items():
-        lf = lf_by_base.get(base)
+        lf = lf_by_master.get(master.master_id)
         click.echo(
             f"\nmaster {master.master_id}  ({master.product_name})  "
             f"{len(master.shade_by_gtin)} shades on site"

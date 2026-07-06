@@ -220,16 +220,20 @@ def resolve_order(
 def resolve_order_shopify(
     odm: OdmParseResult,
     adapter,  # ShopifyAdapter
+    brand_cfg: dict | None = None,
     progress: Callable[[str], None] = lambda _msg: None,
 ) -> OrderResolution:
     """Shopify resolution: each variant barcode == GTIN is its own anchor, so
     there is no master-first shade grouping. Each hit is wrapped in the shared
     MasterResult/VariantResult shape so apply_resolution is unchanged. INCI is
     extracted deterministically from the product body_html (GTIN-anchored by
-    the barcode match). Colour-bearing lines (Maria Nila Colour Refresh) carry
-    a Color/Shade option axis; colorless hair care carries none."""
+    the barcode match). Shade and size come from the option axis when present,
+    else from the title/slug (Maria Nila puts each size and each Colour
+    Refresh shade in its own single-variant product)."""
     from bsb.extract.inci import extract_inci_from_html
-    from bsb.resolve.adapters.shopify import _SHADE_OPTIONS, _SIZE_OPTIONS
+    from bsb.resolve.adapters.shopify import _SHADE_OPTIONS, _SIZE_OPTIONS, parse_shopify_title
+
+    brand_cfg = brand_cfg or {}
 
     result = OrderResolution()
     for row in odm.rows:
@@ -248,21 +252,26 @@ def resolve_order_shopify(
             progress(f"  ✗ {row.ean12}: {hit.reject_reason}")
             continue
 
-        shade = next(
+        axis_shade = next(
             (v for k, v in hit.variant_options.items() if k.casefold() in _SHADE_OPTIONS), None
         )
-        size_opt = next(
+        axis_size = next(
             (v for k, v in hit.variant_options.items() if k.casefold() in _SIZE_OPTIONS), None
         )
+        style_name, title_shade, title_size = parse_shopify_title(
+            hit.product_title or "", hit.product_url or "", brand_cfg
+        )
+        shade = axis_shade or title_shade
+        size_text = axis_size or title_size or hit.size_text
         inci = extract_inci_from_html(hit.body_html) if hit.body_html else None
         master = MasterResult(
             master_id=hit.product_url or hit.gtin13,
-            product_name=hit.product_title or "",
+            product_name=style_name or hit.product_title or "",
             pdp_url=hit.product_url or hit.url,
             discovered_via_gtin=row.gtin13,
             selected_id=row.gtin13,
             selected_shade=shade,
-            size_text=size_opt or hit.size_text,
+            size_text=size_text,
             inci_text=inci.text if inci else None,
             inci_selected_gtin=row.gtin13,
             region="EU",
@@ -273,11 +282,11 @@ def resolve_order_shopify(
             ok=True,
             master_id=master.master_id,
             url=hit.product_url or hit.url,
-            product_name=hit.product_title,
+            product_name=style_name or hit.product_title,
             shade=shade,
-            size_text=size_opt or hit.size_text,
+            size_text=size_text,
             returned_id=row.gtin13,
-            snippet=f"shopify barcode {hit.barcode} == GTIN; variant {hit.variant_title!r}",
+            snippet=f"shopify barcode {hit.barcode} == GTIN; product {hit.product_title!r}",
         )
         entry.ok = True
         entry.master = master
