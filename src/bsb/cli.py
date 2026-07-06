@@ -12,7 +12,7 @@ from pathlib import Path
 import click
 
 from bsb.config import DEFAULT_CONFIG_DIR, load_brands, load_header_synonyms, load_rules
-from bsb.emit.writer import RunSummary, write_output
+from bsb.emit.writer import RegressionError, RunSummary, write_output
 from bsb.ingest.odm import parse_odm
 from bsb.pipeline import build_records
 
@@ -45,6 +45,34 @@ class _Progress:
             u = self.firecrawl.usage
             bits.append(f"fc {u['scrapes']}scr/{u['searches']}srch")
         click.echo("  >> " + " | ".join(bits))
+
+
+def _emit_guarded(
+    template_path, out_path, records, synonyms, run_meta, allow_regressions
+) -> RunSummary:
+    """write_output behind the no-regression gate: a re-emit that would drop a
+    sourced value or demote green/yellow → red vs the previous emit at out_path
+    fails the run with a listed report (standard gate) unless explicitly
+    allowed. The previous emit stays untouched on failure."""
+    try:
+        return write_output(
+            template_path, out_path, records, synonyms, run_meta, allow_regressions
+        )
+    except RegressionError as exc:
+        click.echo(
+            f"\n!! EMIT REGRESSION GATE — refusing to overwrite {out_path}: "
+            f"{len(exc.report)} cell(s) would lose information vs the previous emit."
+        )
+        click.echo("   (sourced value → empty, or green/yellow → red)")
+        for line in exc.report[:60]:
+            click.echo(f"   {line}")
+        if len(exc.report) > 60:
+            click.echo(f"   … and {len(exc.report) - 60} more")
+        click.echo(
+            "\n   The previous emit was left intact. Investigate the dropped cells, "
+            "or re-run with --allow-regressions if this loss is intended."
+        )
+        raise SystemExit(3) from exc
 
 
 @click.group()
@@ -104,6 +132,12 @@ DEFAULT_TEMPLATE = Path(__file__).resolve().parents[2] / "data/templates/boozt_b
     help="For EANs with no brand-site master, resolve retailer-primary "
     "(two families agree = green, else yellow)",
 )
+@click.option(
+    "--allow-regressions",
+    is_flag=True,
+    help="Permit a re-emit that drops a sourced value or demotes green/yellow "
+    "→ red vs the previous emit at --out (default: fail with a report)",
+)
 def run(
     odm_path: str,
     template_path: str,
@@ -118,6 +152,7 @@ def run(
     sample_provenance: int,
     allow_size_anomalies: bool,
     retailer_fallback: bool,
+    allow_regressions: bool,
 ) -> None:
     """Fill a Boozt template from an ODM (--resolve adds brand-site data and
     the validator pass; anomalies stop the run before emit)."""
@@ -167,7 +202,9 @@ def run(
 
     if not do_resolve:
         run_meta["phase"] = "0 (pure local — no web sources; web-dependent fields are NOT_FOUND)"
-        summary = write_output(template_path, out_path, records, synonyms, run_meta)
+        summary = _emit_guarded(
+            template_path, out_path, records, synonyms, run_meta, allow_regressions
+        )
         click.echo("EAN length profile: " + run_meta["ean length profile"])
         _print_summary(summary)
         return
@@ -189,6 +226,7 @@ def run(
         sample_provenance,
         allow_size_anomalies,
         retailer_fallback,
+        allow_regressions,
     )
 
 
@@ -209,6 +247,7 @@ def _run_resolved(
     sample_provenance,
     allow_size_anomalies,
     retailer_fallback,
+    allow_regressions=False,
 ) -> None:
     import random
 
@@ -419,7 +458,9 @@ def _run_resolved(
         )
         run_meta["inci casing"] = "as published by brand (ALL CAPS); separators normalized to comma"
 
-        summary = write_output(template_path, out_path, records, synonyms, run_meta)
+        summary = _emit_guarded(
+            template_path, out_path, records, synonyms, run_meta, allow_regressions
+        )
         _print_summary(summary)
         _print_queue_by_reason(summary)
         if sample_provenance:

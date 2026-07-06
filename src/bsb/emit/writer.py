@@ -25,6 +25,96 @@ RED = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
 
 _STATUS_RANK = {"CONFLICT": 0, "NOT_FOUND": 0, "SINGLE_SOURCE": 1, "MANUAL": 1}
 
+# no-regression guard (build kit 6.9): a re-emit must never silently lose
+# information. "OK" = a value was present or the cell was green/yellow; "red" =
+# the reviewer must source it.
+_OK_STATUSES = {"VERIFIED", "ODM_SOURCED", "SINGLE_SOURCE", "MANUAL"}
+_RED_STATUSES = {"NOT_FOUND", "CONFLICT"}
+
+
+class RegressionError(RuntimeError):
+    """A re-emit would drop information the previous emit had. Carries the
+    per-cell report so the caller can print it and fail the run."""
+
+    def __init__(self, report: list[str]):
+        self.report = report
+        super().__init__(
+            f"emit would regress {len(report)} cell(s) vs the previous emit "
+            "(sourced value lost or green/yellow → red)"
+        )
+
+
+def _cellval_empty(value: object) -> bool:
+    return value is None or (isinstance(value, str) and value.strip() == "")
+
+
+def _read_prior_cells(path: Path) -> dict[tuple[str, str], tuple[object, str]]:
+    """(ean, field) -> (value, status) from a prior emit's Provenance sheet.
+    Returns {} when the file/sheet is absent or unreadable — a first emit has
+    nothing to regress against."""
+    if not path.exists():
+        return {}
+    try:
+        wb = load_workbook(path, read_only=True, data_only=True)
+    except Exception:
+        return {}
+    try:
+        if "Provenance" not in wb.sheetnames:
+            return {}
+        prov = wb["Provenance"]
+        rows = prov.iter_rows(values_only=True)
+        header = next(rows, None)
+        if not header:
+            return {}
+        idx = {str(h): i for i, h in enumerate(header)}
+        need = ("ean", "field", "value", "status")
+        if not all(k in idx for k in need):
+            return {}
+        out: dict[tuple[str, str], tuple[object, str]] = {}
+        for r in rows:
+            ean = r[idx["ean"]]
+            field = r[idx["field"]]
+            if ean is None or field is None:
+                continue
+            out[(str(ean), str(field))] = (r[idx["value"]], str(r[idx["status"]] or ""))
+        return out
+    finally:
+        wb.close()
+
+
+def _new_cells(records: list[ProductRecord]) -> dict[tuple[str, str], tuple[object, str]]:
+    """(ean, field) -> (value, status) for the emit about to be written —
+    mirrors what the Provenance sheet records (every field, template or not)."""
+    out: dict[tuple[str, str], tuple[object, str]] = {}
+    for record in records:
+        fields = [(name, getattr(record, name)) for name in ProductRecord.field_values()]
+        fields += list(record.extras.items())
+        for field, fv in fields:
+            out[(record.ean12, field)] = (fv.value, fv.status)
+    return out
+
+
+def detect_regressions(
+    prior: dict[tuple[str, str], tuple[object, str]],
+    new: dict[tuple[str, str], tuple[object, str]],
+) -> list[str]:
+    """Every cell that would go value→empty or OK(green/yellow)→red. Keyed by
+    (ean, field) so it is insensitive to row reordering."""
+    report: list[str] = []
+    for key, (prior_val, prior_status) in sorted(prior.items()):
+        new_val, new_status = new.get(key, (None, "MISSING"))
+        ean, field = key
+        lost_value = not _cellval_empty(prior_val) and _cellval_empty(new_val)
+        demoted = prior_status in _OK_STATUSES and new_status in _RED_STATUSES
+        if lost_value or demoted:
+            reasons = []
+            if lost_value:
+                reasons.append(f"value {prior_val!r} → (empty)")
+            if demoted:
+                reasons.append(f"status {prior_status} → {new_status}")
+            report.append(f"{ean} · {field}: " + "; ".join(reasons))
+    return report
+
 
 class ReviewItem(BaseModel):
     ean: str
@@ -101,9 +191,25 @@ def write_output(
     records: list[ProductRecord],
     synonyms: dict[str, list[str]],
     run_meta: dict,
+    allow_regressions: bool = False,
 ) -> RunSummary:
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # no-regression gate: compare against the previous emit at this path BEFORE
+    # it is overwritten. A re-emit that would drop a sourced value or demote a
+    # green/yellow cell to red fails the run (unless explicitly allowed) so
+    # information is never silently lost across runs.
+    regressions = detect_regressions(_read_prior_cells(out_path), _new_cells(records))
+    if regressions and not allow_regressions:
+        raise RegressionError(regressions)
+    if regressions:
+        run_meta["regressions allowed (--allow-regressions)"] = (
+            f"{len(regressions)} cell(s) lost/demoted vs previous emit: "
+            + " | ".join(regressions[:20])
+            + (" …" if len(regressions) > 20 else "")
+        )
+
     shutil.copyfile(template_path, out_path)
 
     wb = load_workbook(out_path)
