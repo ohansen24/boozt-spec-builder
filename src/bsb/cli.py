@@ -5,6 +5,7 @@ emit. Fields that need web sources carry status NOT_FOUND until the resolve /
 extract stages exist (Phase 1).
 """
 
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -14,6 +15,36 @@ from bsb.config import DEFAULT_CONFIG_DIR, load_brands, load_header_synonyms, lo
 from bsb.emit.writer import RunSummary, write_output
 from bsb.ingest.odm import parse_odm
 from bsb.pipeline import build_records
+
+
+class _Progress:
+    """Periodic progress line for long runs: every `every` items prints
+    `label n/total | Xm Ys | cache C | fc <credits>`. Per-item messages still
+    flow to the log; the summary is the watch-friendly heartbeat."""
+
+    def __init__(self, total, label, *, fetcher=None, firecrawl=None, every=10):
+        self.total = total
+        self.label = label
+        self.every = every
+        self.fetcher = fetcher
+        self.firecrawl = firecrawl
+        self.n = 0
+        self.start = time.monotonic()
+
+    def __call__(self, msg=None):
+        if msg:
+            click.echo("  " + msg)
+        self.n += 1
+        if self.n % self.every and self.n != self.total:
+            return
+        el = int(time.monotonic() - self.start)
+        bits = [f"{self.label} {self.n}/{self.total}", f"{el // 60}m{el % 60:02d}s"]
+        if self.fetcher is not None:
+            bits.append(f"cache {self.fetcher.stats['cache_hits']}")
+        if self.firecrawl is not None:
+            u = self.firecrawl.usage
+            bits.append(f"fc {u['scrapes']}scr/{u['searches']}srch")
+        click.echo("  >> " + " | ".join(bits))
 
 
 @click.group()
@@ -199,12 +230,17 @@ def _run_resolved(
             adapter = ShopifyAdapter(fetcher, brand_cfg, ean_cache)
             click.echo(f"Resolving {len(odm.rows)} EANs (Shopify barcode anchor)…")
             resolution = resolve_order_shopify(
-                odm, adapter, brand_cfg, progress=lambda m: click.echo("  " + m)
+                odm,
+                adapter,
+                brand_cfg,
+                progress=_Progress(len(odm.rows), "resolve", fetcher=fetcher),
             )
         else:
             adapter = SfccAdapter(fetcher, brand_cfg, ean_cache, playwright)
             click.echo(f"Resolving {len(odm.rows)} EANs master-first…")
-            resolution = resolve_order(odm, adapter, progress=lambda m: click.echo("  " + m))
+            resolution = resolve_order(
+                odm, adapter, progress=_Progress(len(odm.rows), "resolve", fetcher=fetcher)
+            )
         counts = resolution.counts()
         click.echo(
             f"Resolve done: {counts['resolved_ok']}/{counts['eans']} ok, "
@@ -238,20 +274,15 @@ def _run_resolved(
             lf = LookfantasticValidator(fetcher, playwright)
             inci_weak = IncidecoderWeak(fetcher)
             click.echo(f"\nValidator pass over {len(rep_ean_by_master)} masters…")
+            lf_tick = _Progress(len(rep_ean_by_master), "LF-validate", fetcher=fetcher)
             for master_id, (first_ean, master) in rep_ean_by_master.items():
                 product = lf.find_product(first_ean)
                 lf_by_master[master_id] = product
-                click.echo(
-                    f"  LF {master.product_name[:40]}: "
-                    + (
-                        f"{len(product.by_barcode)} barcodes @ {product.url}"
-                        if product
-                        else "no hit"
-                    )
-                )
                 inci_by_master[master_id] = inci_weak.find_inci(
                     str(brand_cfg.get("display_name", brand_key)), master.product_name
                 )
+                hit = f"{len(product.by_barcode)} barcodes @ {product.url}" if product else "no hit"
+                lf_tick(f"LF {master.product_name[:40]}: {hit}")
 
             # validator-of-last-resort: if the configured pool found nothing for
             # this brand, let the generic resolver discover retailer families
@@ -387,6 +418,7 @@ def _generic_validator_pass(
     generic_by_line: dict = {}
     families: dict[str, int] = {}
     progress(f"validator-of-last-resort: generic resolver over {len(rep_by_line)} product lines…")
+    tick = _Progress(len(rep_by_line), "generic-val", fetcher=fetcher, firecrawl=firecrawl)
     for line, ean12 in rep_by_line.items():
         gtin13 = ean12 if len(ean12) == 13 else "0" + ean12
         hits = resolver.resolve(gtin13, ean12, brand, max_pages=3)
@@ -406,8 +438,8 @@ def _generic_validator_pass(
         retailer_inci = (best_inci.inci, best_inci.url) if best_inci else None
         if lf_shaped or retailer_inci:
             generic_by_line[line] = (lf_shaped, retailer_inci)
-        progress(
-            f"  {line[:38]}: "
+        tick(
+            f"{line[:38]}: "
             + (f"{len(anchored)} anchored" if anchored else "no anchored family")
             + (" +INCI" if retailer_inci else "")
         )

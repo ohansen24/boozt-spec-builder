@@ -80,6 +80,7 @@ class PoliteFetcher:
         self.stop_loss = stop_loss
         self._consecutive_failures: dict[str, int] = {}
         self.user_agent = user_agent
+        self.stats = {"fetches": 0, "cache_hits": 0}
         self._client = httpx.Client(
             headers={"user-agent": user_agent, "accept-language": "en-US,en;q=0.9"},
             timeout=timeout,
@@ -108,8 +109,10 @@ class PoliteFetcher:
         if use_cache:
             cached = self.cache.get(url)
             if cached is not None:
+                self.stats["cache_hits"] += 1
                 return cached
 
+        self.stats["fetches"] += 1
         host = urlsplit(url).netloc
         if self._consecutive_failures.get(host, 0) >= self.stop_loss:
             raise HostStopLoss(f"{host}: {self.stop_loss} consecutive failures — stop-loss hit")
