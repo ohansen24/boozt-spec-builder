@@ -93,7 +93,7 @@ def parse_shopify_title(
         # strip a trailing size word and any "NNN ml/g" from the style name
         if trailing_word:
             style = style[: style.lower().rfind(trailing_word.lower())].strip()
-        style = _TITLE_SIZE.sub("", style).strip(" -,")  # noqa: RUF001
+        style = _TITLE_SIZE.sub("", style).strip(" -,")
     return style or title, shade, size
 
 
