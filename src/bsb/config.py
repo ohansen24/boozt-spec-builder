@@ -29,7 +29,27 @@ def load_rules(config_dir: Path = DEFAULT_CONFIG_DIR) -> dict:
 
 
 def load_brands(config_dir: Path = DEFAULT_CONFIG_DIR) -> dict:
-    return load_yaml(config_dir / "brands.yaml")
+    brands = load_yaml(config_dir / "brands.yaml")
+    # merge Felina-confirmed lexicon entries (grown by `bsb ingest-review`) from
+    # config/lexicons/{brand}.yaml, kept separate so brands.yaml stays a curated,
+    # comment-rich file the tool never rewrites. Machine entries append to the
+    # brand's shade_lexicon; a shade already present in brands.yaml wins (curated
+    # entries are never shadowed).
+    lex_dir = config_dir / "lexicons"
+    if lex_dir.is_dir():
+        for brand_key, brand_cfg in brands.items():
+            lex_path = lex_dir / f"{brand_key}.yaml"
+            if not lex_path.exists():
+                continue
+            curated = brand_cfg.get("shade_lexicon") or []
+            existing = {str(e.get("shade", "")).casefold() for e in curated}
+            merged = list(curated)
+            for entry in (load_yaml(lex_path) or {}).get("entries") or []:
+                if str(entry.get("shade", "")).casefold() not in existing:
+                    merged.append(entry)
+            if merged:
+                brand_cfg["shade_lexicon"] = merged
+    return brands
 
 
 def load_header_synonyms(config_dir: Path = DEFAULT_CONFIG_DIR) -> dict[str, list[str]]:

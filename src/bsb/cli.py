@@ -230,6 +230,44 @@ def run(
     )
 
 
+@main.command("ingest-review")
+@click.option("--reviewed", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option("--brand", "brand_key", required=True, help="Brand key (e.g. benefit)")
+@click.option("--reviewer", default="Felina", show_default=True)
+@click.option("--date", default="", help="Decision date (YYYY-MM-DD) for the lexicon entries")
+@click.option(
+    "--config",
+    "config_dir",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=DEFAULT_CONFIG_DIR,
+    show_default=True,
+)
+def ingest_review_cmd(reviewed, brand_key, reviewer, date, config_dir):
+    """Ingest a Felina-reviewed sheet: grow the brand color-code lexicon from
+    her confirmed/corrected values and report the auto-proposer correction
+    rate per source. Never rewrites brands.yaml; conventions/overrides
+    unchanged."""
+    from bsb.ingest.review import ingest_review
+
+    out = ingest_review(reviewed, brand_key.lower(), reviewer, date, config_dir)
+    click.echo(f"Ingested {reviewed} (brand {brand_key})")
+    click.echo(
+        f"  lexicon: +{len(out.new_entries)} new confirmed entries, "
+        f"{out.skipped_existing} already present (skipped)"
+    )
+    click.echo(f"  red cells Felina filled: {out.felina_filled_reds}")
+    report = out.correction_report()
+    click.echo("\nAuto-proposer correction rate (the quality metric):")
+    if report:
+        for line in report:
+            click.echo(line)
+    else:
+        click.echo("  (no proposals in this sheet)")
+    click.echo(
+        "\nHigh-correction sources are candidates to demote or drop — decide on the data."
+    )
+
+
 def _run_resolved(
     odm,
     records,
