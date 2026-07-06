@@ -21,7 +21,7 @@ from bsb.extract.structured import (
 )
 from bsb.fetch.ladder import FetchError, PoliteFetcher
 
-_SFCC_SITE = re.compile(r"/on/demandware\.store/Sites-([A-Za-z0-9_]+)-Site/([A-Za-z_]+)/")
+_SFCC_SITE = re.compile(r"/on/demandware\.store/Sites-([A-Za-z0-9_-]+)-Site/([A-Za-z_]+)/")
 _INCI_TOKENS = re.compile(
     r"\b(AQUA|WATER|GLYCERIN|PARFUM|DIMETHICONE|PHENOXYETHANOL|TOCOPHEROL|LINALOOL)\b",
     re.IGNORECASE,
