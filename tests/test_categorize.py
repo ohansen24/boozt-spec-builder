@@ -139,3 +139,69 @@ def test_dg_trigger_categories_never_default_flammable(rules, brands):
     assert record.flammable.value is None
     assert record.flammable.status == "NOT_FOUND"
     assert "DG-trigger" in record.flammable.notes
+
+
+def test_benefit_site_category_map(rules, brands):
+    """Benefit marketing names carry no category keyword — the first-party
+    datalayer categoryID is the signal. concealer -> Foundation (=> 1018);
+    shade makeup -> Makeup with color_code fail-closed; unmapped id fails
+    closed even when a shade is present."""
+    benefit = brands["benefit"]
+
+    # marketing name that matches NO keyword rule, but categoryID does the work
+    d = categorize("Shellie", rules, benefit, site_category_id="blush")
+    assert d.category == "Makeup"
+    assert d.rule == "site_category:blush"
+
+    # foundation-trap: concealer -> Foundation -> 1018 (not fail-closed)
+    d = categorize("Boi-ing Cakeless", rules, benefit, site_category_id="concealer")
+    assert d.category == "Foundation"
+    assert color_code_for(d.category, "2-Best Life", rules, benefit).code == 1018
+
+    # shade makeup: category decided, but color_code deliberately fails closed
+    d = categorize("Benetint", rules, benefit, site_category_id="liptint")
+    assert d.category == "Makeup"
+    assert color_code_for(d.category, "Dark Cherry", rules, benefit).code is None
+
+    # skincare -> Skin care
+    assert categorize("Good Cleanup", rules, benefit, site_category_id="cleanser").category == (
+        "Skin care"
+    )
+
+    # unmapped categoryID fails closed (never guessed)
+    assert categorize("Mystery Box", rules, benefit, site_category_id="giftset").category is None
+    # no site id + no keyword -> fail closed
+    assert categorize("Shellie", rules, benefit).category is None
+
+
+def test_sfcc_catalog_extract_variants():
+    """The analytics datalayer parse: upc + variant code + hex-from-image, and
+    the product's own categoryID (not the nav-menu entries)."""
+    from bsb.resolve.adapters.sfcc_catalog import SfccCatalogAdapter, _product_category
+
+    html = (
+        'prefix "variants":[{"name":"Boi-ing Cakeless",'
+        '"image_url":"https://x/product_images/BOIINGHC/Large_f6dece_1_shade.jpg",'
+        '"upc":"602004111548","page_id_variant":"FM188"},'
+        '{"name":"Boi-ing Cakeless","image_url":"https://x/Large_eacfba_1.jpg",'
+        '"upc":"602004111555","page_id_variant":"FM189"}] suffix'
+    )
+    adapter = SfccCatalogAdapter.__new__(SfccCatalogAdapter)  # no network
+    entries = adapter.extract_variants(
+        html, "https://b.com/en-gb/product/boi-ing-cakeless-concealer-BOIINGHC.html"
+    )
+    assert [e.upc for e in entries] == ["602004111548", "602004111555"]
+    assert entries[0].variant_code == "FM188"
+    assert entries[0].hex == "F6DECE"
+    assert entries[0].master_code == "BOIINGHC"
+    assert entries[0].gtin13 == "0602004111548"
+
+    dec = (
+        '{"products":[{"id":"BOIINGHC","name":"Boi-ing Cakeless",'
+        '"category":"Concealer","categoryID":"concealer","price":"26.00"}]}'
+        ',{"id":"GIMMEBROW","name":"Gimme Brow+","category":"Brow Gel & Wax",'
+        '"categoryID":"browgelandwax"}'
+    )
+    assert _product_category(dec, "BOIINGHC") == ("Concealer", "concealer")
+    assert _product_category(dec, "GIMMEBROW") == ("Brow Gel & Wax", "browgelandwax")
+    assert _product_category(dec, "NOPE") == (None, None)

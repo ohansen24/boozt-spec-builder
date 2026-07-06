@@ -667,9 +667,14 @@ def apply_resolution(
             status="NOT_FOUND", primary=nars_ref, notes="no INGREDIENTS on brand PDP or retailer"
         )
 
-    # --- category: brand's own name is the taxonomy signal, ODM only fallback
-    decision = categorize(site_name or row.base_name, rules, brand_cfg)
-    basis = "site name" if site_name else "ODM name"
+    # --- category: the brand's own first-party site category (catalog-index
+    # adapters) is the strongest signal; else the brand name, ODM only fallback
+    site_category_id = getattr(master, "site_category_id", None)
+    decision = categorize(site_name or row.base_name, rules, brand_cfg, site_category_id)
+    if site_category_id and decision.rule and decision.rule.startswith("site_category:"):
+        basis = "site categoryID"
+    else:
+        basis = "site name" if site_name else "ODM name"
     if decision.category is None and site_name:
         decision = categorize(row.base_name, rules, brand_cfg)
         basis = "ODM name (site name matched no rule)"

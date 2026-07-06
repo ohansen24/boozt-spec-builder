@@ -220,7 +220,7 @@ def _run_resolved(
     from bsb.resolve.validators import IncidecoderWeak, LookfantasticValidator, cache_lf_hit
 
     adapter_type = brand_cfg.get("adapter")
-    if adapter_type not in ("nars_sfcc", "sfcc", "shopify"):
+    if adapter_type not in ("nars_sfcc", "sfcc", "sfcc_catalog", "shopify"):
         raise click.ClickException(
             f"--resolve: no resolve-capable adapter configured for brand {brand_key!r} "
             f"(adapter={adapter_type!r})"
@@ -239,6 +239,18 @@ def _run_resolved(
             adapter = ShopifyAdapter(fetcher, brand_cfg, ean_cache)
             click.echo(f"Resolving {len(odm.rows)} EANs (Shopify barcode anchor)…")
             resolution = resolve_order_shopify(
+                odm,
+                adapter,
+                brand_cfg,
+                progress=_Progress(len(odm.rows), "resolve", fetcher=fetcher),
+            )
+        elif adapter_type == "sfcc_catalog":
+            from bsb.resolve.adapters.sfcc_catalog import SfccCatalogAdapter
+            from bsb.resolve.orchestrator import resolve_order_sfcc_catalog
+
+            adapter = SfccCatalogAdapter(fetcher, brand_cfg, ean_cache, playwright)
+            click.echo(f"Resolving {len(odm.rows)} EANs (SFCC catalog index)…")
+            resolution = resolve_order_sfcc_catalog(
                 odm,
                 adapter,
                 brand_cfg,

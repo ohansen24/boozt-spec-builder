@@ -227,6 +227,42 @@ benefit:
   gender_default: F
   country_iso: from_odm
   domains: [www.benefitcosmetics.com]
+  # SFRA storefront, but the barcode is NOT the product id (variants keyed by
+  # an internal page_id_variant, e.g. FM188). The upc->variant pairing lives in
+  # each master PDP's analytics datalayer, so resolution is a catalog index:
+  # crawl the product sitemap -> upc->variant index -> Product-Variation per
+  # variant code for the canonical shade/size displayValues. Discovered live
+  # 2026-07-06; regex-bug false alarm on controller discovery ruled out.
+  adapter: sfcc_catalog
+  controller_base: https://www.benefitcosmetics.com/on/demandware.store/Sites-benco-uk-Site/en_GB/
+  catalog_sitemap: https://www.benefitcosmetics.com/en-gb/sitemap_0-product.xml
+  # Benefit shade names are proprietary marketing names ("1-Amaze 'Em (Fair
+  # Neutral)") with no Boozt color-code mapping -> color_code fails closed to
+  # Felina. No shade_lexicon by design.
+  name_format:
+    title_case: false
+  # Benefit's on-site product NAMES are pure marketing names ("Shellie",
+  # "Benetint") with no category keyword, so name-based categorize() can't
+  # classify them. The PDP datalayer's first-party categoryID (GTIN-anchored to
+  # the master) is the signal. Map each categoryID -> Boozt category. concealer
+  # -> Foundation activates the foundation-family color code (1018, confirmed
+  # Felina); the shade-based makeup categories fail color_code closed (no
+  # lexicon) -> Felina, as expected. Any categoryID absent here fails closed.
+  site_category_map:
+    concealer: Foundation
+    blush: Makeup
+    bronzer: Makeup
+    highlighter: Makeup
+    liptint: Makeup
+    mascara: Makeup
+    browpencil: Makeup
+    browgelandwax: Makeup
+    primer: Makeup
+    setter: Makeup
+    cleanser: Skin care
+    moisturizer: Skin care
+    maskandtreatment: Skin care
+    pore-category: Skin care
 
 colorescience:
   boozt_code: CSC

@@ -217,6 +217,77 @@ def resolve_order(
     return result
 
 
+def resolve_order_sfcc_catalog(
+    odm: OdmParseResult,
+    adapter,  # SfccCatalogAdapter
+    brand_cfg: dict | None = None,
+    progress: Callable[[str], None] = lambda _msg: None,
+) -> OrderResolution:
+    """SFCC catalog-index resolution for barcode-is-not-pid storefronts
+    (Benefit). Stage 1 crawls the catalog PDPs into a ``upc -> CatalogEntry``
+    index; stage 2 resolves each order EAN through its variant code via a
+    GTIN-anchored Product-Variation call. Rows whose barcode is absent from the
+    catalog go NOT_FOUND (non-blocking — the order may list items the region no
+    longer carries). Each resolved hit is wrapped in the shared
+    MasterResult/VariantResult shape so apply_resolution is unchanged."""
+    progress("building catalog index…")
+    index = adapter.build_index(progress=progress)
+    progress(f"catalog index ready: {len(index)} variants across the catalog")
+
+    result = OrderResolution()
+    for row in odm.rows:
+        entry_key = row.ean12 if row.ean12 in index else row.gtin13
+        catalog_entry = index.get(entry_key)
+        resolved = ResolvedEan(ean12=row.ean12, gtin13=row.gtin13)
+        if catalog_entry is None:
+            resolved.error = "barcode not in Benefit catalog index"
+            result.master_failures.append(f"{row.ean12}: not in catalog index")
+            result.by_ean[row.ean12] = resolved
+            progress(f"  ✗ {row.ean12}: not in catalog index")
+            continue
+
+        try:
+            variant = adapter.resolve_variant(catalog_entry)
+        except FetchError as exc:
+            resolved.error = str(exc)
+            result.by_ean[row.ean12] = resolved
+            progress(f"  ✗ {row.ean12}: {exc}")
+            continue
+
+        if not variant.ok:
+            resolved.error = variant.reject_reason
+            if variant.returned_id is not None:
+                result.anchor_rejections.append(f"{row.ean12}: {variant.reject_reason}")
+            else:
+                result.master_failures.append(f"{row.ean12}: {variant.reject_reason}")
+            result.by_ean[row.ean12] = resolved
+            progress(f"  ✗ {row.ean12}: {variant.reject_reason}")
+            continue
+
+        master = MasterResult(
+            master_id=catalog_entry.master_code,
+            product_name=variant.product_name or catalog_entry.product_name,
+            pdp_url=catalog_entry.master_pdp_url,
+            discovered_via_gtin=row.gtin13,
+            selected_id=catalog_entry.variant_code,
+            selected_shade=variant.shade,
+            size_text=variant.size_text,
+            site_category_id=catalog_entry.site_category_id,
+            region="EU",
+        )
+        resolved.ok = True
+        resolved.master = master
+        resolved.variant = variant
+        result.masters.setdefault(catalog_entry.master_code, master)
+        result.by_ean[row.ean12] = resolved
+        progress(
+            f"● {row.ean12} -> {master.product_name!r}"
+            + (f" [{variant.shade}]" if variant.shade else "")
+            + (f" ({variant.size_text})" if variant.size_text else "")
+        )
+    return result
+
+
 def resolve_order_shopify(
     odm: OdmParseResult,
     adapter,  # ShopifyAdapter

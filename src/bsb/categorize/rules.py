@@ -30,13 +30,29 @@ def _keyword_match(name: str, keyword: str) -> bool:
     return re.search(rf"(?<!\w){re.escape(keyword)}(?!\w)", name) is not None
 
 
-def categorize(product_name: str, rules: dict, brand_cfg: dict | None = None) -> CategoryDecision:
+def categorize(
+    product_name: str,
+    rules: dict,
+    brand_cfg: dict | None = None,
+    site_category_id: str | None = None,
+) -> CategoryDecision:
     """Decide the Boozt Product Category for a product name.
 
-    Rule group order in boozt_rules.yaml is decision priority
-    (foundation_family first). Brand-curated product names are consulted
-    after the generic rules so a generic hit stays explainable.
+    Decision priority:
+    1. The brand's own first-party site category (``site_category_id`` mapped
+       through ``brand_cfg.site_category_map``). Storefronts whose product
+       names are pure marketing names ("Shellie", "Benetint") carry no category
+       keyword, so their GTIN-anchored datalayer categoryID is the most
+       reliable signal — and it still fails closed for any id not in the map.
+    2. Generic keyword rules (foundation_family first, per yaml order).
+    3. Brand-curated product-name keywords.
     """
+    site_map = (brand_cfg or {}).get("site_category_map") or {}
+    if site_category_id and site_category_id in site_map:
+        return CategoryDecision(
+            category=site_map[site_category_id], rule=f"site_category:{site_category_id}"
+        )
+
     name = product_name.casefold()
 
     for group_name, group in rules["category_rules"].items():

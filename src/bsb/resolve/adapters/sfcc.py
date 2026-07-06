@@ -62,6 +62,10 @@ class MasterResult(BaseModel):
     region: str = "EU"  # EU | US | ARCHIVE
     archived_at: str | None = None  # snapshot date when region == ARCHIVE
     fallback_note: str | None = None  # why the EU site could not serve this
+    # first-party site classification (catalog-index adapters): the brand's own
+    # datalayer categoryID (e.g. Benefit "concealer"), mapped to a Boozt
+    # category via brand_cfg.site_category_map. None for name-only adapters.
+    site_category_id: str | None = None
     fetched_at: datetime | None = None
     from_cache: bool = False
 
