@@ -1,0 +1,138 @@
+# Global colour-word -> Boozt anchor map (Stage 1, Oli 2026-07-06).
+#
+# PURPOSE: raise the color_code auto-rate for path-3 products (everything that
+# is not skincare/colourless 1017, foundation/concealer 1018, or a multi-shade
+# palette 1016). Reads plain colour/undertone WORDS out of the normalized
+# color_name and proposes the matching anchor.
+#
+# This is GLOBAL and versioned — deliberately DISTINCT from a per-brand
+# shade_lexicon (which holds Felina-confirmed shade->code entries). It never
+# overrides the 1017/1018/1016 rules, never overrides a confirmed lexicon hit,
+# and its output is always a PROPOSAL: value filled, YELLOW, noted "proposed
+# from shade name — please confirm or correct". Proposals never write to a
+# brand lexicon; only Felina's confirmed/corrected values do (ingest-review).
+#
+# MULTI-WORD RULE (documented, deliberately conservative): extract every token
+# that is a colour word below; ignore modifier/undertone words. Propose ONLY if
+# all matched colour words resolve to exactly ONE anchor. Zero colour words, or
+# two+ distinct anchors (e.g. "Golden Brick Red" -> Gold+Red, "Nude Pink" ->
+# Beige+Pink) => NO proposal, stays red for Felina. Precision over coverage;
+# Stage 2 (swatch hex) is the second signal for the rest.
+#
+# NEVER proposes 1016 Multi-Colored, 1017 Clear, 1018 Natural (meta-codes).
+
+version: 1
+
+# undertone / finish / intensity words — ignored (not anchors)
+modifiers:
+  - warm
+  - cool
+  - cold
+  - light
+  - medium
+  - deep
+  - dark
+  - neutral
+  - soft
+  - rich
+  - intense
+  - bright
+  - pale
+  - fair
+  - muted
+  - matte
+  - satin
+  - sheer
+  - super
+  - supercharged
+  - baby
+  - true
+
+# colour word -> anchor code. Only unambiguous colour terms; fruit/marketing
+# names that could read as two families are intentionally omitted.
+words:
+  # 1001 Cream
+  cream: 1001
+  ivory: 1001
+  vanilla: 1001
+  # 1002 Beige
+  beige: 1002
+  nude: 1002
+  sand: 1002
+  fawn: 1002
+  # 1003 Pink
+  pink: 1003
+  rose: 1003
+  fuchsia: 1003
+  magenta: 1003
+  raspberry: 1003
+  # 1004 Blue
+  blue: 1004
+  azure: 1004
+  cobalt: 1004
+  # 1005 Green
+  green: 1005
+  emerald: 1005
+  mint: 1005
+  # 1006 Yellow
+  yellow: 1006
+  # 1007 Orange
+  orange: 1007
+  apricot: 1007
+  tangerine: 1007
+  # 1008 Purple
+  purple: 1008
+  plum: 1008
+  lilac: 1008
+  lavender: 1008
+  violet: 1008
+  mauve: 1008
+  # 1009 Red
+  red: 1009
+  cherry: 1009
+  ruby: 1009
+  scarlet: 1009
+  crimson: 1009
+  pomegranate: 1009
+  # 1010 Brown
+  brown: 1010
+  auburn: 1010
+  chestnut: 1010
+  chocolate: 1010
+  caramel: 1010
+  espresso: 1010
+  mocha: 1010
+  hazelnut: 1010
+  taupe: 1010
+  # 1011 Grey
+  grey: 1011
+  gray: 1011
+  # 1012 Black
+  black: 1012
+  ebony: 1012
+  jet: 1012
+  onyx: 1012
+  noir: 1012
+  # 1013 White
+  white: 1013
+  snow: 1013
+  # 1014 Silver
+  silver: 1014
+  # 1015 Gold
+  gold: 1015
+  golden: 1015
+  # 1019 Navy
+  navy: 1019
+  # 1020 Khaki green
+  khaki: 1020
+  olive: 1020
+  # 1021 Coral
+  coral: 1021
+  peach: 1021
+  salmon: 1021
+  # 1022 Burgundy
+  burgundy: 1022
+  wine: 1022
+  maroon: 1022
+  merlot: 1022
+  oxblood: 1022

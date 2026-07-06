@@ -24,6 +24,40 @@ class ColorCodeDecision(BaseModel):
     code: int | None = None
     rule: str | None = None
     pending_confirmation: bool = False  # open question 2 -> emit yellow
+    proposal: bool = False  # Stage 1/2 auto-proposal -> yellow, "please confirm"
+    proposal_note: str | None = None  # human-facing rationale for the proposal
+
+
+# meta-codes the auto-proposers must never emit (only rules assign these)
+_NEVER_PROPOSE = {1016, 1017, 1018}
+_WORD_TOKEN = re.compile(r"[^\W\d_]+", re.UNICODE)
+
+
+def propose_color_code_from_words(shade: str | None, word_map: dict | None) -> ColorCodeDecision:
+    """Stage 1: read plain colour words out of a shade name and propose the
+    matching anchor. Modifier/undertone words are ignored. Propose only when
+    all matched colour words resolve to exactly ONE anchor (documented
+    multi-word rule); zero or 2+ distinct anchors -> no proposal (fail closed).
+    Never emits the meta-codes 1016/1017/1018."""
+    words_cfg = (word_map or {}).get("words") or {}
+    if not shade or not words_cfg:
+        return ColorCodeDecision()
+    matched: list[str] = []
+    anchors: set[int] = set()
+    for token in _WORD_TOKEN.findall(shade.casefold()):
+        code = words_cfg.get(token)
+        if code is not None and int(code) not in _NEVER_PROPOSE:
+            anchors.add(int(code))
+            matched.append(token)
+    if len(anchors) != 1:
+        return ColorCodeDecision()  # ambiguous or no colour word
+    code = next(iter(anchors))
+    return ColorCodeDecision(
+        code=code,
+        rule=f"color_word:{'+'.join(dict.fromkeys(matched))}->{code}",
+        proposal=True,
+        proposal_note="proposed from shade name — please confirm or correct",
+    )
 
 
 def _keyword_match(name: str, keyword: str) -> bool:
@@ -119,5 +153,11 @@ def color_code_for(
             hit = needle.startswith(lexeme) if entry.get("match") == "prefix" else needle == lexeme
             if hit:
                 return ColorCodeDecision(code=int(entry["code"]), rule=f"lexicon:{lexeme}")
+
+    # path-3 fallback: a colour-word PROPOSAL (never overrides the rules or a
+    # confirmed lexicon hit above). Yellow, "please confirm" — Stage 1.
+    proposal = propose_color_code_from_words(shade, rules.get("color_word_map"))
+    if proposal.code is not None:
+        return proposal
 
     return ColorCodeDecision()  # fail closed

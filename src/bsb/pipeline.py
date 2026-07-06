@@ -196,6 +196,12 @@ def _color_code_field(cc, rules: dict) -> FieldValue:
             status="VERIFIED",
             notes=f"rule {cc.rule}; {confirmed_note}",
         )
+    if getattr(cc, "proposal", False):
+        # auto-proposal (colour word / swatch hex): always yellow, clearly
+        # marked so Felina's ingest-review can measure the correction rate and
+        # so it never masquerades as a confirmed value or writes a lexicon.
+        note = cc.proposal_note or "auto-proposed — please confirm or correct"
+        return FieldValue(value=str(cc.code), status="SINGLE_SOURCE", notes=f"{note} [{cc.rule}]")
     notes = f"rule {cc.rule}"
     if cc.pending_confirmation:
         notes += " — pending confirmation"

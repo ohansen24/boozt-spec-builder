@@ -158,10 +158,14 @@ def test_benefit_site_category_map(rules, brands):
     assert d.category == "Foundation"
     assert color_code_for(d.category, "2-Best Life", rules, benefit).code == 1018
 
-    # shade makeup: category decided, but color_code deliberately fails closed
+    # shade makeup: category decided; color_code has no confirmed lexicon, so it
+    # is a Stage-1 colour-word PROPOSAL (yellow) — "Dark Cherry" -> cherry ->
+    # 1009 Red; a shade with no clear colour word still fails closed.
     d = categorize("Benetint", rules, benefit, site_category_id="liptint")
     assert d.category == "Makeup"
-    assert color_code_for(d.category, "Dark Cherry", rules, benefit).code is None
+    cc = color_code_for(d.category, "Dark Cherry", rules, benefit)
+    assert cc.code == 1009 and cc.proposal
+    assert color_code_for(d.category, "Hoola", rules, benefit).code is None
 
     # skincare -> Skin care
     assert categorize("Good Cleanup", rules, benefit, site_category_id="cleanser").category == (

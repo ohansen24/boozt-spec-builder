@@ -19,7 +19,13 @@ def load_yaml(path: Path) -> Any:
 
 
 def load_rules(config_dir: Path = DEFAULT_CONFIG_DIR) -> dict:
-    return load_yaml(config_dir / "boozt_rules.yaml")
+    rules = load_yaml(config_dir / "boozt_rules.yaml")
+    # global colour-word map (Stage 1 color-code proposer) rides inside rules so
+    # color_code_for reaches it without a signature change. Optional file.
+    word_map_path = config_dir / "color_word_map.yaml"
+    if word_map_path.exists():
+        rules["color_word_map"] = load_yaml(word_map_path)
+    return rules
 
 
 def load_brands(config_dir: Path = DEFAULT_CONFIG_DIR) -> dict:
