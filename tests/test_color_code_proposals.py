@@ -123,3 +123,21 @@ def test_hex_only_proposes_lower_confidence():
     h = propose_color_code_from_hex("8B5A2B", AH)           # brown
     c = combine_color_proposals(w, h)
     assert w.code is None and c.code == h.code and "swatch_hex" in c.rule
+
+
+def test_low_chroma_hex_does_not_veto_chromatic_word():
+    # muted/greyish brown swatch (low chroma) + word "Brown" -> word-only, not red
+    w = propose_color_code_from_words("4 Warm Deep Brown", WM)
+    h = propose_color_code_from_hex("6B5645", AH)  # low-chroma
+    assert h.low_chroma
+    c = combine_color_proposals(w, h)
+    assert c.code == 1010 and c.proposal and "word_over_low_chroma_hex" in c.rule
+    assert "two_signals_agree" not in (c.rule or "")
+
+
+def test_strong_vs_strong_still_red():
+    # two chromatic signals that disagree stay withheld
+    w = propose_color_code_from_words("Wild Plum", WM)      # purple, chromatic
+    h = propose_color_code_from_hex("8C3A3A", AH)           # red-brown, chromatic
+    assert not h.low_chroma
+    assert combine_color_proposals(w, h).code is None

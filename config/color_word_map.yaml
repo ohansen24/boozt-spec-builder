@@ -21,7 +21,7 @@
 #
 # NEVER proposes 1016 Multi-Colored, 1017 Clear, 1018 Natural (meta-codes).
 
-version: 2
+version: 3
 
 # Stage 2: representative sRGB hex per CHROMATIC anchor, for the swatch-hex ->
 # nearest-anchor proposer (perceptual CIELAB ΔE). Deliberately excludes the
@@ -49,7 +49,15 @@ anchors_hex:
   1021: FF7F50  # Coral
   1022: 7B1E3B  # Burgundy
 
-version_note: v2 adds anchors_hex for the Stage 2 swatch-hex proposer
+# Stage 2 signal weighting (Oli 2026-07-06): a swatch whose CIELAB chroma
+# (C* = sqrt(a^2 + b^2)) is below this is a low-chroma NEUTRAL (grey/beige/
+# cream/silver territory) — a WEAK signal that must not veto an unambiguous
+# chromatic word. On a word/hex disagreement where the hex is low-chroma and
+# the word is chromatic, emit a WORD-ONLY proposal (never "two signals agree").
+# Strong-vs-strong (both chromatic) disagreements stay red.
+low_chroma_threshold: 20
+
+version_note: v3 adds low_chroma_threshold for Stage-2 signal weighting
 
 # undertone / finish / intensity words — ignored (not anchors)
 modifiers:

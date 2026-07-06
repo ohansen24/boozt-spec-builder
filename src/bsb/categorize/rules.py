@@ -26,10 +26,15 @@ class ColorCodeDecision(BaseModel):
     pending_confirmation: bool = False  # open question 2 -> emit yellow
     proposal: bool = False  # Stage 1/2 auto-proposal -> yellow, "please confirm"
     proposal_note: str | None = None  # human-facing rationale for the proposal
+    low_chroma: bool = False  # (hex proposals) swatch is a low-chroma neutral -> weak
 
 
 # meta-codes the auto-proposers must never emit (only rules assign these)
 _NEVER_PROPOSE = {1016, 1017, 1018}
+# low-chroma neutral anchors: a chromatic word must not be vetoed by a hex that
+# lands here (grey/beige/cream/silver). Black/White stay strong (mascara etc.).
+_NEUTRAL_ANCHORS = {1001, 1002, 1011, 1014}
+_DEFAULT_LOW_CHROMA = 20.0
 _WORD_TOKEN = re.compile(r"[^\W\d_]+", re.UNICODE)
 
 
@@ -62,14 +67,18 @@ def _delta_e(a: tuple, b: tuple) -> float:
 
 
 def propose_color_code_from_hex(
-    hex_value: str | None, anchors_hex: dict | None
+    hex_value: str | None,
+    anchors_hex: dict | None,
+    low_chroma_threshold: float = _DEFAULT_LOW_CHROMA,
 ) -> ColorCodeDecision:
     """Stage 2: nearest CHROMATIC anchor to a swatch hex by CIELAB ΔE. Never the
     meta-codes 1016/1017/1018 (excluded from anchors_hex). A proposal; the
-    caller decides confidence (agrees-with-word vs hex-only)."""
+    caller decides confidence (agrees-with-word vs hex-only). Marks low_chroma
+    when the swatch's own C* is below threshold (a weak, neutral signal)."""
     lab = _hex_to_lab(hex_value)
     if lab is None or not anchors_hex:
         return ColorCodeDecision()
+    chroma = (lab[1] ** 2 + lab[2] ** 2) ** 0.5
     best_code, best_d = None, None
     for code, ahex in anchors_hex.items():
         if int(code) in _NEVER_PROPOSE:
@@ -88,6 +97,7 @@ def propose_color_code_from_hex(
         rule=f"swatch_hex:{clean}->{best_code}(dE{best_d:.0f})",
         proposal=True,
         proposal_note=f"proposed from swatch hex {clean} — lower confidence, please confirm",
+        low_chroma=chroma < low_chroma_threshold,
     )
 
 
@@ -105,7 +115,16 @@ def combine_color_proposals(
                 proposal=True,
                 proposal_note="two signals agree (shade word + swatch hex) — please confirm",
             )
-        # disagree: withhold the proposal, surface both for the human
+        # signal weighting: a low-chroma (neutral) swatch is a WEAK signal and
+        # does not veto an unambiguous chromatic word -> word-only proposal
+        if hexp.low_chroma and word.code not in _NEUTRAL_ANCHORS:
+            return ColorCodeDecision(
+                code=word.code,
+                rule=f"word_over_low_chroma_hex:{word.rule} (hex {hexp.rule})",
+                proposal=True,
+                proposal_note="swatch hex low-chroma (weak) — word signal used; please confirm",
+            )
+        # strong-vs-strong disagreement: withhold, surface both for the human
         return ColorCodeDecision(
             code=None,
             rule=f"signals_disagree:word->{word.code} vs {hexp.rule}",
@@ -244,7 +263,11 @@ def color_code_for(
     # combined per the two-signal rule. Always yellow / "please confirm".
     word_map = rules.get("color_word_map") or {}
     word = propose_color_code_from_words(shade, word_map)
-    hexp = propose_color_code_from_hex(swatch_hex, word_map.get("anchors_hex"))
+    hexp = propose_color_code_from_hex(
+        swatch_hex,
+        word_map.get("anchors_hex"),
+        float(word_map.get("low_chroma_threshold", _DEFAULT_LOW_CHROMA)),
+    )
     combined = combine_color_proposals(word, hexp)
     disagree = combined.rule and combined.rule.startswith("signals_disagree")
     if combined.code is not None or disagree:
