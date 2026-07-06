@@ -39,6 +39,16 @@ _WEAK_NON_EN = {
 _WORD = re.compile(r"[^\W\d_]+", re.UNICODE)
 
 
+# a color_name still carrying a leading "N - "/"N-" shade-code separator has
+# not been through a per-brand shade_format — surface it for a human decision
+# (the number may BE the shade identity, e.g. Benefit; never silently stripped)
+_LEADING_NUM_SEP = re.compile(r"^\s*\d+(?:\.\d+)?\s*[-–—]\s")  # noqa: RUF001
+
+
+def leading_numeric_separator(text: str | None) -> bool:
+    return bool(text) and bool(_LEADING_NUM_SEP.match(text))
+
+
 def has_non_latin(text: str | None) -> bool:
     return bool(text) and bool(_NON_LATIN.search(text))
 

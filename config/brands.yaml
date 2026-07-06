@@ -259,9 +259,20 @@ benefit:
   retailer_shade_confirms_only: true
   # Benefit shade names are proprietary marketing names ("1-Amaze 'Em (Fair
   # Neutral)") with no Boozt color-code mapping -> color_code fails closed to
-  # Felina. No shade_lexicon by design.
+  # Felina. No shade_lexicon by design — but when Felina fills Benefit color
+  # codes, her lexicon keys MUST use the canonical color_name below (post
+  # shade_format), or the next order keys on dirty strings and misses.
   name_format:
     title_case: false
+  # NOT the NARS strip case: Benefit's leading number IS the shade identity
+  # (brow/complexion, Laguna-01 class). Keep the number; drop only the cosmetic
+  # "N - descriptor" separator; title-case; keep parentheticals + internal
+  # hyphens. "3.5 - Neutral medium brown" -> "3.5 Neutral Medium Brown";
+  # "2-Best Life (Fair Warm)" -> "2 Best Life (Fair Warm)". Confirmed Oli
+  # 2026-07-06 (keep site number as-is, keep parenthetical).
+  shade_format:
+    drop_leading_number_separator: true
+    title_case: true
   # Benefit's on-site product NAMES are pure marketing names ("Shellie",
   # "Benetint") with no category keyword, so name-based categorize() can't
   # classify them. The PDP datalayer's first-party categoryID (GTIN-anchored to

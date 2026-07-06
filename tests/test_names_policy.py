@@ -81,3 +81,39 @@ def test_size_harvested_from_title_when_no_size_field(brands, rules):
     apply_retailer_primary(rec, _row(), hits, brands["maria_nila"], rules)
     assert rec.size.value == "100 ml"
     assert rec.size.status == "SINGLE_SOURCE"
+
+
+# ---- Benefit numbered-shade normalization (Oli 2026-07-06, confirmed) -----
+
+def test_benefit_shade_format_keeps_number_drops_separator():
+    from bsb.normalize.boozt import normalize_color_name
+    cfg = {"shade_format": {"drop_leading_number_separator": True, "title_case": True}}
+    cases = {
+        "3.5 - Neutral medium brown": "3.5 Neutral Medium Brown",  # number kept, sep dropped
+        "2-Best Life (Fair Warm)": "2 Best Life (Fair Warm)",      # no-space sep + parenthetical
+        "7-Jump In (Medium-Tan Warm)": "7 Jump In (Medium-Tan Warm)",  # internal hyphen kept
+        "5 - Warm black-brown": "5 Warm Black-Brown",              # internal hyphen kept
+        "Aurora (fair light pink)": "Aurora (Fair Light Pink)",    # no number, parenthetical tc
+        "Golden brick red": "Golden Brick Red",
+        "Clear": "Clear",
+        "Hoola": "Hoola",
+    }
+    for raw, want in cases.items():
+        assert normalize_color_name(raw, cfg) == want, raw
+
+
+def test_benefit_number_is_not_stripped():
+    # the NARS strip must NOT apply — the number is the shade identity
+    from bsb.normalize.boozt import normalize_color_name
+    cfg = {"shade_format": {"drop_leading_number_separator": True, "title_case": True}}
+    out = normalize_color_name("3.5 - Neutral medium brown", cfg)
+    assert out.startswith("3.5 ")  # number retained
+
+
+def test_leading_numeric_separator_qa_flag():
+    from bsb.validate.language import leading_numeric_separator
+    assert leading_numeric_separator("3.5 - Neutral medium brown")  # raw -> flag
+    assert leading_numeric_separator("2 - Warm golden blonde")
+    assert not leading_numeric_separator("3.5 Neutral Medium Brown")  # canonical -> clean
+    assert not leading_numeric_separator("Golden Brick Red")
+    assert not leading_numeric_separator("Clear")

@@ -715,6 +715,14 @@ def _print_summary(s: RunSummary) -> None:
         for item in s.non_english_names[:15]:
             click.echo(f"  {item.ean} {item.field} = {item.value!r} [{item.notes}]")
 
+    if s.shade_pattern_flags:
+        click.echo(
+            f"\n!! QA — {len(s.shade_pattern_flags)} color_name(s) with leading number+separator "
+            "(needs per-brand shade_format decision):"
+        )
+        for item in s.shade_pattern_flags[:15]:
+            click.echo(f"  {item.ean} = {item.value!r}")
+
     if s.extraction_miss or s.no_source:
         em, ns = sum(s.extraction_miss.values()), sum(s.no_source.values())
         click.echo("\nRed cells by failure class:")

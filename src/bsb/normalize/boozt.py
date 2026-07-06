@@ -145,6 +145,12 @@ def normalize_color_name(
     fmt = (brand_cfg or {}).get("shade_format") or {}
     if fmt.get("strip_shade_codes") or fmt.get("strip_numeric_suffix"):  # old key honored
         cleaned = _strip_shade_codes(cleaned)
+    if fmt.get("drop_leading_number_separator"):
+        # Benefit brow/complexion class: the leading number IS the shade
+        # identity (kept), but the "N - descriptor"/"N-descriptor" separator is
+        # cosmetic -> single space. Only that first separator; internal hyphens
+        # (black-brown, Medium-Tan) are preserved.
+        cleaned = re.sub(r"^(\d+(?:\.\d+)?)\s*[-–—]\s*", r"\1 ", cleaned)  # noqa: RUF001
     if fmt.get("title_case"):
         cleaned = _brand_title_case(cleaned)
     return cleaned or None

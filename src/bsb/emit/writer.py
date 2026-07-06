@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from bsb.ingest.template import TemplateMap, map_headers
 from bsb.models import FieldValue, ProductRecord
-from bsb.validate.language import non_english_tokens
+from bsb.validate.language import leading_numeric_separator, non_english_tokens
 
 GREEN = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
 YELLOW = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
@@ -136,6 +136,8 @@ class RunSummary(BaseModel):
     no_source: dict[str, int] = Field(default_factory=dict)
     # QA: shipped style_name/color_name values that read as non-English
     non_english_names: list[ReviewItem] = Field(default_factory=list)
+    # QA: color_names still carrying a leading "N - " shade-code separator
+    shade_pattern_flags: list[ReviewItem] = Field(default_factory=list)
     review_red: list[ReviewItem] = Field(default_factory=list)
     review_yellow: list[ReviewItem] = Field(default_factory=list)
     cleared_template_rows: int = 0
@@ -237,6 +239,7 @@ def write_output(
     cleared = _clear_data_rows(ws, tmap)
 
     non_english: list[ReviewItem] = []  # QA: shipped names that read non-English
+    shade_flags: list[ReviewItem] = []  # QA: color_names with a leading N- separator
     status_counter: Counter[str] = Counter()
     # Oli distinction: a red cell backed by an anchored source (has a primary
     # SourceRef) is an EXTRACTION MISS — we reached the product page but pulled
@@ -290,6 +293,17 @@ def write_output(
                                 notes=f"non-English tokens: {', '.join(toks)}",
                             )
                         )
+                if field == "color_name" and leading_numeric_separator(str(fv.value or "")):
+                    shade_flags.append(
+                        ReviewItem(
+                            ean=record.ean12,
+                            field=field,
+                            status=fv.status,
+                            value=fv.value,
+                            notes="leading number+separator — needs per-brand shade_format "
+                            "(the number may be the shade identity; never auto-strip)",
+                        )
+                    )
                 rank = _STATUS_RANK.get(fv.status)
                 settled_manual = fv.status == "MANUAL" and (fv.value or _by_design_blank(fv))
                 if rank is not None and not settled_manual:
@@ -389,6 +403,12 @@ def write_output(
         report.append(["ean", "field", "value", "tokens"])
         for item in non_english:
             report.append([item.ean, item.field, _sanitize(item.value), item.notes])
+    if shade_flags:
+        report.append([])
+        report.append(["QA — color_name with leading number+separator (per-brand decision)"])
+        report.append(["ean", "field", "value", "note"])
+        for item in shade_flags:
+            report.append([item.ean, item.field, _sanitize(item.value), item.notes])
     report.append([])
     report.append(["red cells by failure class", "cells"])
     report.append(
@@ -427,6 +447,7 @@ def write_output(
         extraction_miss=dict(anchored_miss),
         no_source=dict(no_source),
         non_english_names=non_english,
+        shade_pattern_flags=shade_flags,
         review_red=review_red,
         review_yellow=review_yellow,
         cleared_template_rows=cleared,
