@@ -106,3 +106,19 @@ def test_propellant_leads_pass_unlabeled_but_silicone_needs_label():
     )
     assert not inci_plausible(silicone)[0]
     assert inci_plausible(silicone, labeled=True)[0]
+
+
+def test_masked_redacted_inci_rejected():
+    from bsb.extract.inci import inci_plausible
+    # incibeauty-style redaction: a standalone all-asterisk token -> rejected
+    masked = "Aqua (Water), *******, Cera Alba, Glycerin, Parfum, Limonene"
+    ok, why = inci_plausible(masked, labeled=True)
+    assert not ok and "masked" in why
+    # a trailing organic marker on a real ingredient is NOT a redaction -> fine
+    organic = "Aqua, Lavandula Angustifolia Oil*, Glycerin, Parfum, Limonene, Linalool"
+    assert inci_plausible(organic, labeled=True)[0]
+
+
+def test_incibeauty_excluded_as_inci_source():
+    from bsb.resolve.generic import _UNRELIABLE_INCI_FAMILIES
+    assert "incibeauty" in _UNRELIABLE_INCI_FAMILIES

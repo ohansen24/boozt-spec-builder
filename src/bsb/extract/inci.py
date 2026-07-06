@@ -73,6 +73,12 @@ def inci_plausible(text: str, labeled: bool = False) -> tuple[bool, str]:
     tokens = [t for t in _SPLIT.split(cleaned) if t.strip()]
     if len(tokens) < 5:
         return False, f"only {len(tokens)} separator-delimited tokens"
+    # redacted list: a standalone all-asterisk token ("*******") is a hidden
+    # ingredient (incibeauty and similar databases mask/paywall them). A masked
+    # list is incomplete and must never ship — a trailing organic marker
+    # ("Aqua*") is fine, but a token that is ONLY asterisks is a redaction.
+    if any(re.fullmatch(r"\*+", t.strip()) for t in tokens):
+        return False, "contains a masked/redacted ingredient (asterisks)"
     if not labeled and not _LEAD_TOKENS.match(tokens[0].strip("[](): ")):
         return False, f"implausible leading ingredient {tokens[0][:30]!r}"
     prose = [t for t in tokens if _MARKETING.search(t) or len(t.split()) > 7]

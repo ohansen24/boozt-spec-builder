@@ -20,6 +20,11 @@ from bsb.fetch.firecrawl import FirecrawlClient
 from bsb.fetch.ladder import FetchError, PoliteFetcher
 from bsb.resolve.market import classify_market
 
+# families whose INCI is untrustworthy (alphabetized, not concentration order;
+# ingredients masked/paywalled) — usable as a GTIN anchor for name/shade but
+# never as an INCI source
+_UNRELIABLE_INCI_FAMILIES = frozenset({"incibeauty", "incidecoder"})
+
 # hosts that never carry product-data value for us
 _JUNK_HOSTS = (
     "amazon.",
@@ -165,8 +170,11 @@ class GenericResolver:
             evidence = page_asserts_gtin(page.text, gtin13, products)
             fields = _extract_product_fields(products)
             inci_text = inci_source = None
-            if evidence is not None:
-                # retailer INCI only ever comes from GTIN-anchored pages
+            if evidence is not None and family not in _UNRELIABLE_INCI_FAMILIES:
+                # retailer INCI only ever comes from GTIN-anchored pages.
+                # incibeauty & co. list INCI alphabetically (not concentration
+                # order) and mask ingredients — never trust their INCI even
+                # when the page is a valid GTIN anchor for name/shade.
                 from bsb.extract.inci import extract_inci_from_html
 
                 candidate = extract_inci_from_html(page.text)
