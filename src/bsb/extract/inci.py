@@ -83,6 +83,27 @@ def inci_plausible(text: str, labeled: bool = False) -> tuple[bool, str]:
     return True, ""
 
 
+_SENTENCE_BREAK = re.compile(r"[.!?]\s+[A-ZÅÄÖÜÉÈ]")
+
+
+def _leading_inci_run(text: str) -> str:
+    """Keep only the leading comma-delimited run of INCI-shaped tokens, cutting
+    at the first token that reads as prose (a marketing word, >6 words, or a
+    sentence break). Language-robust: bounds an inline-label grab to the actual
+    list without enumerating "How to use"/"Användning"/… stop-headings for
+    every storefront locale (seen live: Maria Nila .se pages ran the grab past
+    the list into Swedish copy, tripping the prose guard on the whole block)."""
+    kept: list[str] = []
+    for part in _SPLIT.split(text):
+        token = part.strip()
+        if not token:
+            continue
+        if _MARKETING.search(token) or len(token.split()) > 6 or _SENTENCE_BREAK.search(token):
+            break
+        kept.append(token)
+    return ", ".join(kept)
+
+
 def _text_of(element) -> str:
     return " ".join(element.get_text(" ", strip=True).split())
 
@@ -146,7 +167,8 @@ def extract_inci_from_html(html: str) -> InciCandidate | None:
         )
         if css:
             segment = segment[: css.start()]
-        segment = segment.strip().rstrip(",;· ")
+        # trim to the leading INCI run (locale-agnostic list boundary)
+        segment = _leading_inci_run(segment).strip().rstrip(",;· ")
         ok, _ = inci_plausible(segment, labeled=True)
         if ok:
             candidates.append(

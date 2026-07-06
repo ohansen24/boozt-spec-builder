@@ -15,7 +15,7 @@ Three gaps, all on GTIN-anchored brand PDPs that visibly list INCI:
 
 from pathlib import Path
 
-from bsb.extract.inci import extract_inci_from_html, inci_plausible
+from bsb.extract.inci import _leading_inci_run, extract_inci_from_html, inci_plausible
 
 FIX = Path(__file__).parent / "fixtures" / "inci"
 
@@ -61,6 +61,23 @@ def test_labeled_relaxes_lead_whitelist_but_keeps_guards():
     assert not inci_plausible(prose, labeled=True)[0]
     # and mid-list truncation
     assert not inci_plausible("Aqua, Glycerin, Parfum, Limonene, Linalool,", labeled=True)[0]
+
+
+def test_leading_inci_run_trims_trailing_prose_locale_agnostic():
+    # an inline-label grab runs past the list into page copy (esp. non-English
+    # locales whose "How to use" heading the stop-regex misses); the run is
+    # bounded at the first prose token, keeping the full ingredient list
+    seg = (
+        "Alcohol Denat., Butane, Isobutane, Aqua/Water/Eau, Propane, Limonene, Linalool, "
+        "Använd genom att spraya på torrt hår för ett naturligt hållbart fäste hela dagen"
+    )
+    run = _leading_inci_run(seg)
+    assert run.startswith("Alcohol Denat., Butane, Isobutane")
+    assert run.endswith("Linalool")
+    assert "Använd" not in run and "naturligt" not in run
+    # a clean list is returned intact (multi-word INCI tokens are kept)
+    clean = "Aqua, Cetearyl Alcohol, Butyrospermum Parkii (Shea) Butter, Parfum, Limonene"
+    assert _leading_inci_run(clean) == clean
 
 
 def test_propellant_leads_pass_unlabeled_but_silicone_needs_label():
