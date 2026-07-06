@@ -63,6 +63,18 @@ def test_labeled_relaxes_lead_whitelist_but_keeps_guards():
     assert not inci_plausible("Aqua, Glycerin, Parfum, Limonene, Linalool,", labeled=True)[0]
 
 
+def test_doubled_ingredients_block_yields_single_list():
+    # a page that renders the list twice (mobile + desktop DOM) leaves a second
+    # "Ingredients:" label inside the inline-label window — the value must be the
+    # single list, not a doubled one
+    lst = "Aqua/Water/Eau, Cetearyl Alcohol, Glycerin, Parfum, Limonene, CI 42090/Blue 1"
+    html = f"<html><body><p>Ingredients: {lst}</p><p>Ingredients: {lst}</p></body></html>"
+    got = extract_inci_from_html(html)
+    assert got is not None
+    assert got.text == lst
+    assert got.text.count("Aqua/Water/Eau") == 1  # not doubled
+
+
 def test_leading_inci_run_trims_trailing_prose_locale_agnostic():
     # an inline-label grab runs past the list into page copy (esp. non-English
     # locales whose "How to use" heading the stop-regex misses); the run is

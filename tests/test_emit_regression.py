@@ -9,7 +9,7 @@ the emit unless explicitly allowed.
 import pytest
 from tests.conftest import ODM_PATH, TEMPLATE_PATH
 
-from bsb.emit.writer import RegressionError, detect_regressions, write_output
+from bsb.emit.writer import RegressionError, _sanitize, detect_regressions, write_output
 from bsb.ingest.odm import OdmRow, parse_odm
 from bsb.models import FieldValue, ProductRecord
 from bsb.pipeline import apply_retailer_primary, build_records
@@ -109,6 +109,31 @@ def test_reemit_regression_allowed_with_flag(tmp_path, base_records, synonyms):
     assert summary.records == len(base_records)
     # the allowance is recorded for the audit trail
     assert any("regressions allowed" in k for k in meta2)
+
+
+def test_illegal_control_chars_are_stripped(tmp_path, base_records, synonyms):
+    """Scraped INCI can carry control bytes openpyxl rejects — the writer must
+    strip them (verbatim otherwise), never crash the emit."""
+    assert _sanitize("Aqua,\x0b Glycerin\x0c, Parfum") == "Aqua, Glycerin, Parfum"
+    assert _sanitize(None) is None
+    victim = base_records[0]
+    victim.ingredients = FieldValue(
+        value="Aqua/Water/Eau, Glycerin\x0b, Parfum, Limonene", status="SINGLE_SOURCE"
+    )
+    out = tmp_path / "ctrl.xlsx"
+    # must not raise IllegalCharacterError
+    summary = write_output(TEMPLATE_PATH, out, base_records, synonyms, {"_ingest_issues": []})
+    assert summary.records == len(base_records)
+    from openpyxl import load_workbook
+
+    prov = load_workbook(out)["Provenance"]
+    idx = {h: i for i, h in enumerate(next(prov.iter_rows(values_only=True)))}
+    vals = [
+        r[idx["value"]]
+        for r in prov.iter_rows(min_row=2, values_only=True)
+        if r[idx["ean"]] == victim.ean12 and r[idx["field"]] == "ingredients"
+    ]
+    assert vals and "\x0b" not in vals[0]
 
 
 def test_first_emit_has_no_prior_to_regress(tmp_path, base_records, synonyms):

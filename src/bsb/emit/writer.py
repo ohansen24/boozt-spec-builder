@@ -13,6 +13,7 @@ from collections import Counter
 from pathlib import Path
 
 from openpyxl import load_workbook
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import PatternFill
 from pydantic import BaseModel, Field
 
@@ -166,13 +167,22 @@ def _cell_value(field: str, fv: FieldValue) -> object:
         try:
             return int(fv.value)
         except ValueError:
-            return fv.value
+            return _sanitize(fv.value)
     if field == "purchase_price":
         try:
             return float(fv.value)
         except ValueError:
-            return fv.value
-    return fv.value
+            return _sanitize(fv.value)
+    return _sanitize(fv.value)
+
+
+def _sanitize(value: object) -> object:
+    """Strip control characters Excel/openpyxl rejects (IllegalCharacterError).
+    Scraped page text (notably INCI copied from PDPs) can carry stray control
+    bytes; the value is otherwise kept verbatim (tabs/newlines preserved)."""
+    if isinstance(value, str):
+        return ILLEGAL_CHARACTERS_RE.sub("", value)
+    return value
 
 
 def _clear_data_rows(ws, tmap: TemplateMap) -> int:
@@ -313,7 +323,7 @@ def write_output(
         ]
     )
     for row in provenance_rows:
-        prov.append(row)
+        prov.append([_sanitize(c) for c in row])
     for cell in prov["A"]:
         cell.number_format = "@"
 
@@ -373,12 +383,14 @@ def write_output(
         report.append(["VERIFY AT RECEIPT — confirm against physical goods (warehouse)"])
         report.append(["ean", "field", "value", "notes"])
         for item in receipt_checks:
-            report.append([item.ean, item.field, item.value, item.notes])
+            report.append([item.ean, item.field, _sanitize(item.value), _sanitize(item.notes)])
     report.append([])
     report.append(["review queue (red first, then yellow)"])
     report.append(["ean", "field", "status", "value", "notes"])
     for item in review_red + review_yellow:
-        report.append([item.ean, item.field, item.status, item.value, item.notes])
+        report.append(
+            [item.ean, item.field, item.status, _sanitize(item.value), _sanitize(item.notes)]
+        )
 
     wb.save(out_path)
 

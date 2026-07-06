@@ -86,19 +86,34 @@ def inci_plausible(text: str, labeled: bool = False) -> tuple[bool, str]:
 _SENTENCE_BREAK = re.compile(r"[.!?]\s+[A-ZÅÄÖÜÉÈ]")
 
 
+def _lowercase_words(token: str) -> int:
+    """Count all-lowercase alphabetic words (len>=3) — a proxy for prose.
+    INCI tokens are Title-Case/ALL-CAPS nomenclature (possibly with slashes and
+    parentheticals), so they carry ~0 lowercase words even when long
+    ("Candelilla Cera/Euphorbia Cerifera (Candelilla) Wax/Cire De Candelilla");
+    a sentence fragment carries several ("spraya på torrt hår för")."""
+    return sum(1 for w in token.split() if w.isalpha() and w.islower() and len(w) >= 3)
+
+
 def _leading_inci_run(text: str) -> str:
     """Keep only the leading comma-delimited run of INCI-shaped tokens, cutting
-    at the first token that reads as prose (a marketing word, >6 words, or a
-    sentence break). Language-robust: bounds an inline-label grab to the actual
-    list without enumerating "How to use"/"Användning"/… stop-headings for
-    every storefront locale (seen live: Maria Nila .se pages ran the grab past
-    the list into Swedish copy, tripping the prose guard on the whole block)."""
+    at the first token that reads as prose (a marketing word, a sentence break,
+    or 3+ lowercase connective words). Language-robust: bounds an inline-label
+    grab to the actual list without enumerating "How to use"/"Användning"/…
+    stop-headings for every storefront locale (seen live: Maria Nila .se pages
+    ran the grab past the list into Swedish copy). The lowercase-word test —
+    not a raw word count — preserves long multilingual INCI tokens."""
     kept: list[str] = []
     for part in _SPLIT.split(text):
         token = part.strip()
         if not token:
             continue
-        if _MARKETING.search(token) or len(token.split()) > 6 or _SENTENCE_BREAK.search(token):
+        prose = (
+            _MARKETING.search(token)
+            or _SENTENCE_BREAK.search(token)
+            or _lowercase_words(token) >= 3
+        )
+        if prose:
             break
         kept.append(token)
     return ", ".join(kept)
@@ -167,6 +182,12 @@ def extract_inci_from_html(html: str) -> InciCandidate | None:
         )
         if css:
             segment = segment[: css.start()]
+        # a page that renders the list twice (mobile + desktop DOM) leaves a
+        # second "Ingredients:" label inside the window — cut at it so the value
+        # is the single list, not a doubled one
+        dup = _LABEL_INLINE.search(segment)
+        if dup:
+            segment = segment[: dup.start()]
         # trim to the leading INCI run (locale-agnostic list boundary)
         segment = _leading_inci_run(segment).strip().rstrip(",;· ")
         ok, _ = inci_plausible(segment, labeled=True)
