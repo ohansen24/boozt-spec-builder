@@ -1,41 +1,32 @@
-# Validator pool v2 (kit 6.3 item 3). Probe status 2026-07-03, httpx +
-# Playwright rungs; the Firecrawl rung is implemented but blocked on
-# FIRECRAWL_API_KEY (.env) — re-probe the disabled members when it lands.
-# Rule unchanged: no GTIN assertion on the page -> WEAK support only.
 members:
   lookfantastic:
     enabled: true
-    notes: search A/B-bucketed per session (context-rotate retry); product
-      pages embed per-variant barcodes = GTIN anchor
-  # Firecrawl re-probe 2026-07-03: walls bypassed for douglas/boots/notino/
-  # flaconi, but their search-result GRIDS are XHR-rendered even under
-  # Firecrawl — their PDPs are reachable only via web-search discovery, i.e.
-  # the generic resolver IS the engine for these families (live-verified:
-  # NARS control EAN returned GTIN-anchored retailer hits via search).
+    notes: search A/B-bucketed per session (context-rotate retry); product pages embed
+      per-variant barcodes = GTIN anchor
   douglas:
     enabled: false
-    reason: wall bypassed via Firecrawl; search grid XHR-empty — PDPs via
-      generic-resolver web search only
+    reason: wall bypassed via Firecrawl; search grid XHR-empty — PDPs via generic-resolver
+      web search only
   boots:
     enabled: false
-    reason: wall bypassed via Firecrawl; search grid XHR-empty — PDPs via
-      generic-resolver web search only
+    reason: wall bypassed via Firecrawl; search grid XHR-empty — PDPs via generic-resolver
+      web search only
   flaconi:
     enabled: false
-    reason: renders via Firecrawl; no results for probe EAN — reassess with
-      pharmacy-brand EANs
+    reason: renders via Firecrawl; no results for probe EAN — reassess with pharmacy-brand
+      EANs
   sephora_de:
     enabled: false
     reason: still serves a 2.6KB shell even to Firecrawl
   notino:
     enabled: false
-    reason: wall bypassed via Firecrawl; search grid XHR-empty — PDPs via
-      generic-resolver web search only
-# Per-brand pools: French pharmacy brands need pharmacy retailers once any
-# are reachable (newpharma, shop-apotheke = probe candidates, unprobed).
+    reason: wall bypassed via Firecrawl; search grid XHR-empty — PDPs via generic-resolver
+      web search only
 pools:
-  default: [lookfantastic]
-  pharmacy: [lookfantastic] # + pharmacy retailers when reachable
+  default:
+  - lookfantastic
+  pharmacy:
+  - lookfantastic
 brand_pools:
   nars: default
   olaplex: default
@@ -45,3 +36,38 @@ brand_pools:
   avene: pharmacy
   aderma: pharmacy
   svr: pharmacy
+discovered_pools:
+  maria_nila:
+  - cosmeterie
+  - hermosabeauty
+  - bellaffair
+  - salonservicespro
+  - jomashop
+  - bluemercury
+  - rozetka
+  - premierbeautysupply
+  - refayiti
+  - salontotal
+  - haarshop
+  - prozdravevlasy
+  - nalda
+  - allegro
+  - lyskin
+  - autumnnucci
+  - 50-ml
+  - proshop
+  - harveynichols
+  - beautyplussalon
+  - krasotika
+  - perfumesclub
+  - rivegauche
+  - naturalook
+  - xpertbeauty
+  - skinbeautifulrx
+  - latiendadecosmeticos
+  - prices
+  - lojaglamourosa
+  - world
+  - digit-eyes
+  - media
+  - jadero
