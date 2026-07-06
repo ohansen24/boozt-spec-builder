@@ -29,6 +29,15 @@ def test_lf_ingredients_absent_returns_none():
     assert _lf_ingredients(no_inci) is None
 
 
+def test_lfproduct_carries_inci_text():
+    # regression guard: the field must live on LfProduct (not WeakInci) or the
+    # extracted INCI is silently dropped by pydantic and never reaches the sheet
+    from bsb.resolve.validators import LfProduct
+
+    p = LfProduct(url="https://x", inci_text="Aqua, Glycerin, Parfum")
+    assert p.inci_text == "Aqua, Glycerin, Parfum"
+
+
 class _StubFetch:
     def __init__(self, text):
         self.text = text

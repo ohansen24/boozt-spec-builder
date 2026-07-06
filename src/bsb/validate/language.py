@@ -17,11 +17,24 @@ _NON_EN_LANGS = {
     "pl", "de", "fr", "es", "it", "nl", "sv", "da", "fi", "pt", "cs", "sk",
     "ru", "uk", "no", "hu", "ro", "bg", "hr", "sl", "lt", "lv", "et", "el", "tr",
 }
-# non-English function words that betray a localized name even in Latin script
-_NON_EN_WORDS = {
-    "do", "dla", "włosów", "i", "w", "z", "na", "und", "für", "mit", "ohne",
-    "pour", "avec", "sans", "et", "les", "des", "och", "för", "med", "til",
-    "per", "con", "sin", "voor", "met", "haar", "haare", "cheveux", "cabello",
+# STRONG signals: words that are essentially never in an English product name —
+# foreign cosmetic/hair nouns. One is enough to flag (source page lang differs
+# from the name text, so text is decisive).
+_STRONG_NON_EN = {
+    "włosów", "odżywka", "szampon", "pielęgnacja",              # pl
+    "tratament", "păr", "par", "îngrijire", "sampon",           # ro
+    "cheveux", "traitement", "soin", "aprés-shampooing",        # fr
+    "cabello", "champú", "acondicionador", "tratamiento", "capilar",  # es
+    "capelli", "trattamento", "balsamo",                        # it
+    "cabelo", "tratamento",                                     # pt
+    "haare", "haar", "pflege", "spülung", "haarshampoo",        # de/nl
+    "hår", "hoito",                                             # scandinavian/fi
+}
+# WEAK signals: function words that also appear (rarely) in English; need two.
+_WEAK_NON_EN = {
+    "do", "dla", "i", "w", "z", "na", "und", "für", "mit", "ohne", "pour",
+    "avec", "sans", "et", "les", "des", "och", "för", "med", "til", "per",
+    "con", "sin", "voor", "met", "para", "pentru",
 }
 _WORD = re.compile(r"[^\W\d_]+", re.UNICODE)
 
@@ -31,24 +44,32 @@ def has_non_latin(text: str | None) -> bool:
 
 
 def non_english_tokens(text: str | None) -> list[str]:
-    """Signals that a name is not English: non-Latin script, or localized
-    function words. Empty list => looks English (ASCII/Latin, no giveaways)."""
+    """Signals that a NAME is not English: non-Latin script (definite), an
+    unambiguous foreign cosmetic word (strong, one suffices), or two+ localized
+    function words (weak, robust to an English homograph like "per"). Empty
+    list => reads English. Deliberately text-only: an English name on a foreign
+    storefront (e.g. "Purifying Cleanse Shampoo" on a .pl page) must still
+    ship."""
     if not text:
         return []
     hits: list[str] = []
     if _NON_LATIN.search(text):
         hits.append("non-Latin-script")
-    for word in _WORD.findall(text.casefold()):
-        if word in _NON_EN_WORDS:
-            hits.append(word)
+    words = [w for w in _WORD.findall(text.casefold())]
+    hits += [w for w in words if w in _STRONG_NON_EN]
+    weak = [w for w in words if w in _WEAK_NON_EN]
+    if len(weak) >= 2:
+        hits += weak
     return hits
 
 
 def is_english_name(text: str | None, source_language: str | None = None) -> bool:
-    """A name is shippable only if it reads as English. Uses the text itself
-    (script + function words) and the source page's language when known."""
+    """A name is shippable only if the NAME TEXT reads as English (non-Latin
+    script or localized function words fail it). The source page's language is
+    deliberately NOT decisive — a non-English storefront often lists the
+    English product name ("Purifying Cleanse Shampoo" on a .pl page), and Boozt
+    wants that English name. ``source_language`` is accepted for callers that
+    record it in a note, but never rejects an English-reading name."""
     if not text:
         return True  # emptiness is handled by the caller's fail-closed path
-    if non_english_tokens(text):
-        return False
-    return not (source_language and source_language.casefold() in _NON_EN_LANGS)
+    return not non_english_tokens(text)

@@ -63,6 +63,7 @@ class LfProduct(BaseModel):
     product_name: str | None = None
     size_text: str | None = None
     by_barcode: dict[str, LfVariant] = Field(default_factory=dict)
+    inci_text: str | None = None  # LF serves INCI in a structured "ingredients" field
     from_cache: bool = False
     fetched_at: datetime | None = None
 
