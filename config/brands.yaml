@@ -191,6 +191,14 @@ maria_nila:
   adapter: shopify
   shopify:
     domain: marianila.com
+  # regional sibling storefronts (same manufacturer, same Shopify platform).
+  # marianila.se is a separate SE store with broader coverage (205 vs 190
+  # products): probe 2026-07-06 resolved 17/31 of the marianila.com-unresolved
+  # order EANs at brand authority — sprays, mousses, dry shampoos, a Color
+  # Refresh — strictly better than retailer-primary for those rows. Tried in
+  # order for any EAN the primary storefront can't resolve.
+  brand_family_domains:
+    - marianila.se
   # shade-bearing hair lines: the colour IS a separate product, shade lives
   # in the title after the line prefix (Shopify variant axis is Default Title)
   shade_from_name:

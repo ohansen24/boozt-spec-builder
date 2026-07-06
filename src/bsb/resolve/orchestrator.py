@@ -288,6 +288,54 @@ def resolve_order_sfcc_catalog(
     return result
 
 
+def _wrap_shopify_hit(row: OdmRow, hit, brand_cfg: dict, source_domain: str | None = None):
+    """Wrap a Shopify variant hit into the shared MasterResult/VariantResult so
+    apply_resolution is unchanged. Shade/size come from the option axis when
+    present, else the title/slug. INCI is extracted from body_html
+    (GTIN-anchored by the barcode == GTIN match)."""
+    from bsb.extract.inci import extract_inci_from_html
+    from bsb.resolve.adapters.shopify import _SHADE_OPTIONS, _SIZE_OPTIONS, parse_shopify_title
+
+    axis_shade = next(
+        (v for k, v in hit.variant_options.items() if k.casefold() in _SHADE_OPTIONS), None
+    )
+    axis_size = next(
+        (v for k, v in hit.variant_options.items() if k.casefold() in _SIZE_OPTIONS), None
+    )
+    style_name, title_shade, title_size = parse_shopify_title(
+        hit.product_title or "", hit.product_url or "", brand_cfg
+    )
+    shade = axis_shade or title_shade
+    size_text = axis_size or title_size or hit.size_text
+    inci = extract_inci_from_html(hit.body_html) if hit.body_html else None
+    via = f" (brand-family {source_domain})" if source_domain else ""
+    master = MasterResult(
+        master_id=hit.product_url or hit.gtin13,
+        product_name=style_name or hit.product_title or "",
+        pdp_url=hit.product_url or hit.url,
+        discovered_via_gtin=row.gtin13,
+        selected_id=row.gtin13,
+        selected_shade=shade,
+        size_text=size_text,
+        inci_text=inci.text if inci else None,
+        inci_selected_gtin=row.gtin13,
+        region="EU",
+    )
+    variant = VariantResult(
+        gtin13=row.gtin13,
+        ean12=row.ean12,
+        ok=True,
+        master_id=master.master_id,
+        url=hit.product_url or hit.url,
+        product_name=style_name or hit.product_title,
+        shade=shade,
+        size_text=size_text,
+        returned_id=row.gtin13,
+        snippet=f"shopify barcode {hit.barcode} == GTIN{via}; product {hit.product_title!r}",
+    )
+    return master, variant, shade, bool(inci)
+
+
 def resolve_order_shopify(
     odm: OdmParseResult,
     adapter,  # ShopifyAdapter
@@ -295,78 +343,73 @@ def resolve_order_shopify(
     progress: Callable[[str], None] = lambda _msg: None,
 ) -> OrderResolution:
     """Shopify resolution: each variant barcode == GTIN is its own anchor, so
-    there is no master-first shade grouping. Each hit is wrapped in the shared
-    MasterResult/VariantResult shape so apply_resolution is unchanged. INCI is
-    extracted deterministically from the product body_html (GTIN-anchored by
-    the barcode match). Shade and size come from the option axis when present,
-    else from the title/slug (Maria Nila puts each size and each Colour
-    Refresh shade in its own single-variant product)."""
-    from bsb.extract.inci import extract_inci_from_html
-    from bsb.resolve.adapters.shopify import _SHADE_OPTIONS, _SIZE_OPTIONS, parse_shopify_title
+    there is no master-first shade grouping. Rows the primary storefront can't
+    resolve are retried against the brand's regional sibling storefronts
+    (``brand_family_domains``, e.g. marianila.se) — same manufacturer, so a hit
+    there is brand-authority, strictly better than retailer-primary."""
+    from bsb.resolve.adapters.shopify import ShopifyAdapter
 
     brand_cfg = brand_cfg or {}
-
     result = OrderResolution()
-    for row in odm.rows:
-        entry = ResolvedEan(ean12=row.ean12, gtin13=row.gtin13)
-        try:
-            hit = adapter.resolve_variant(row.gtin13)
-        except FetchError as exc:
-            entry.error = str(exc)
-            result.by_ean[row.ean12] = entry
-            progress(f"  ✗ {row.ean12}: {exc}")
-            continue
-        if not hit.ok:
-            entry.error = hit.reject_reason
-            result.master_failures.append(f"{row.ean12}: {hit.reject_reason}")
-            result.by_ean[row.ean12] = entry
-            progress(f"  ✗ {row.ean12}: {hit.reject_reason}")
-            continue
 
-        axis_shade = next(
-            (v for k, v in hit.variant_options.items() if k.casefold() in _SHADE_OPTIONS), None
+    def _try(adapter_, row):
+        try:
+            hit = adapter_.resolve_variant(row.gtin13)
+        except FetchError as exc:
+            return None, str(exc)
+        if not hit.ok:
+            return None, hit.reject_reason
+        return hit, None
+
+    unresolved: list[tuple[OdmRow, str]] = []
+    for row in odm.rows:
+        hit, err = _try(adapter, row)
+        if hit is None:
+            unresolved.append((row, err or "not found"))
+            continue
+        master, variant, shade, has_inci = _wrap_shopify_hit(row, hit, brand_cfg)
+        entry = ResolvedEan(
+            ean12=row.ean12, gtin13=row.gtin13, ok=True, master=master, variant=variant
         )
-        axis_size = next(
-            (v for k, v in hit.variant_options.items() if k.casefold() in _SIZE_OPTIONS), None
-        )
-        style_name, title_shade, title_size = parse_shopify_title(
-            hit.product_title or "", hit.product_url or "", brand_cfg
-        )
-        shade = axis_shade or title_shade
-        size_text = axis_size or title_size or hit.size_text
-        inci = extract_inci_from_html(hit.body_html) if hit.body_html else None
-        master = MasterResult(
-            master_id=hit.product_url or hit.gtin13,
-            product_name=style_name or hit.product_title or "",
-            pdp_url=hit.product_url or hit.url,
-            discovered_via_gtin=row.gtin13,
-            selected_id=row.gtin13,
-            selected_shade=shade,
-            size_text=size_text,
-            inci_text=inci.text if inci else None,
-            inci_selected_gtin=row.gtin13,
-            region="EU",
-        )
-        variant = VariantResult(
-            gtin13=row.gtin13,
-            ean12=row.ean12,
-            ok=True,
-            master_id=master.master_id,
-            url=hit.product_url or hit.url,
-            product_name=style_name or hit.product_title,
-            shade=shade,
-            size_text=size_text,
-            returned_id=row.gtin13,
-            snippet=f"shopify barcode {hit.barcode} == GTIN; product {hit.product_title!r}",
-        )
-        entry.ok = True
-        entry.master = master
-        entry.variant = variant
         result.masters.setdefault(master.product_name or row.gtin13, master)
         result.by_ean[row.ean12] = entry
         progress(
-            f"● {row.ean12} -> {hit.product_title!r}"
+            f"● {row.ean12} -> {master.product_name!r}"
             + (f" [{shade}]" if shade else "")
-            + (" +INCI" if inci else "")
+            + (" +INCI" if has_inci else "")
         )
+
+    # brand-family fallback: regional sibling storefronts for the unresolved
+    family_domains = brand_cfg.get("brand_family_domains") or []
+    for domain in family_domains:
+        if not unresolved:
+            break
+        fam_cfg = {**brand_cfg, "shopify": {**(brand_cfg.get("shopify") or {}), "domain": domain}}
+        fam = ShopifyAdapter(adapter.fetcher, fam_cfg, adapter.ean_cache)
+        progress(f"brand-family fallback: {len(unresolved)} unresolved -> {domain}")
+        still: list[tuple[OdmRow, str]] = []
+        for row, prior_err in unresolved:
+            hit, err = _try(fam, row)
+            if hit is None:
+                still.append((row, prior_err))
+                continue
+            master, variant, shade, has_inci = _wrap_shopify_hit(row, hit, brand_cfg, domain)
+            entry = ResolvedEan(
+                ean12=row.ean12, gtin13=row.gtin13, ok=True, master=master, variant=variant
+            )
+            result.masters.setdefault(master.product_name or row.gtin13, master)
+            result.by_ean[row.ean12] = entry
+            progress(
+                f"● {row.ean12} -> {master.product_name!r} [{domain}]"
+                + (f" [{shade}]" if shade else "")
+                + (" +INCI" if has_inci else "")
+            )
+        unresolved = still
+
+    # whatever remains unresolved after all family domains
+    for row, err in unresolved:
+        result.master_failures.append(f"{row.ean12}: {err}")
+        result.by_ean[row.ean12] = ResolvedEan(ean12=row.ean12, gtin13=row.gtin13, error=err)
+        progress(f"  ✗ {row.ean12}: {err}")
+
     return result
