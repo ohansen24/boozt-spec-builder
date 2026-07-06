@@ -98,6 +98,12 @@ DEFAULT_TEMPLATE = Path(__file__).resolve().parents[2] / "data/templates/boozt_b
     is_flag=True,
     help="Do not stop on site-vs-ODM size mismatches; ship yellow with notes (kit 6.5)",
 )
+@click.option(
+    "--retailer-fallback",
+    is_flag=True,
+    help="For EANs with no brand-site master, resolve retailer-primary "
+    "(two families agree = green, else yellow)",
+)
 def run(
     odm_path: str,
     template_path: str,
@@ -111,6 +117,7 @@ def run(
     show_variants: bool,
     sample_provenance: int,
     allow_size_anomalies: bool,
+    retailer_fallback: bool,
 ) -> None:
     """Fill a Boozt template from an ODM (--resolve adds brand-site data and
     the validator pass; anomalies stop the run before emit)."""
@@ -181,6 +188,7 @@ def run(
         show_variants,
         sample_provenance,
         allow_size_anomalies,
+        retailer_fallback,
     )
 
 
@@ -200,6 +208,7 @@ def _run_resolved(
     show_variants,
     sample_provenance,
     allow_size_anomalies,
+    retailer_fallback,
 ) -> None:
     import random
 
@@ -327,6 +336,24 @@ def _run_resolved(
             if lf_product is not None and row.ean12 in lf_product.by_barcode:
                 cache_lf_hit(ean_cache, row.gtin13, lf_product, row.ean12)
 
+        # retailer-primary closing pass: EANs with no brand-site master never
+        # got a generic attempt (that pass was keyed to resolved masters).
+        # Fill them from GTIN-anchored retailers under the retailer-primary
+        # policy (green only when two families agree).
+        if retailer_fallback:
+            _retailer_primary_pass(
+                records,
+                by_ean_row,
+                resolution,
+                brand_cfg,
+                brand_key,
+                rules,
+                fetcher,
+                config_dir,
+                run_meta,
+                progress=lambda m: click.echo("  " + m),
+            )
+
         if size_anomalies:
             click.echo(
                 "\n!! SIZE ANOMALIES vs ODM hints"
@@ -388,6 +415,59 @@ def _run_resolved(
     finally:
         fetcher.close()
         playwright.close()
+
+
+def _retailer_primary_pass(
+    records,
+    by_ean_row,
+    resolution,
+    brand_cfg,
+    brand_key,
+    rules,
+    fetcher,
+    config_dir,
+    run_meta,
+    progress,
+):
+    """Closing pass for EANs with NO brand-site master: generic resolver
+    (search -> GTIN-anchored retailer PDPs) fills them retailer-primary."""
+    from bsb.fetch.firecrawl import FirecrawlClient
+    from bsb.pipeline import apply_retailer_primary
+    from bsb.resolve.generic import GenericResolver
+
+    firecrawl = FirecrawlClient(fetcher.cache, fetcher.limiter)
+    if not firecrawl.available:
+        progress("retailer-fallback unavailable (no FIRECRAWL_API_KEY) — skipping")
+        return
+    resolver = GenericResolver(fetcher, firecrawl)
+    brand = str(brand_cfg.get("search_brand") or brand_cfg.get("display_name") or brand_key)
+
+    unresolved = [
+        r
+        for r in records
+        if not ((res := resolution.by_ean.get(r.ean12)) and res.ok and res.master)
+    ]
+    if not unresolved:
+        return
+    usage0 = firecrawl.snapshot_usage()
+    tick = _Progress(len(unresolved), "retailer-primary", fetcher=fetcher, firecrawl=firecrawl)
+    recovered = 0
+    for record in unresolved:
+        row = by_ean_row[record.ean12]
+        hits = resolver.resolve(record.gtin13, record.ean12, brand, max_pages=4)
+        anchored = [h for h in hits if h.gtin_anchored]
+        if anchored:
+            apply_retailer_primary(record, row, hits, brand_cfg, rules)
+            if record.style_name.value or record.ingredients.value:
+                recovered += 1
+        tick(f"{record.ean12}: {len(anchored)} anchored families")
+    used = firecrawl.usage_since(usage0)
+    run_meta["retailer-fallback credits"] = (
+        f"{used['scrapes']} scrapes, {used['searches']} searches "
+        f"({used['search_results']} results), {used['cache_hits']} cache hits"
+    )
+    run_meta["retailer-fallback recovered"] = f"{recovered}/{len(unresolved)} unresolved rows"
+    progress(f"retailer-fallback: recovered {recovered}/{len(unresolved)} unresolved rows")
 
 
 def _generic_validator_pass(

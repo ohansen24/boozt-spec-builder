@@ -266,6 +266,127 @@ def build_records(
     ]
 
 
+def apply_retailer_primary(record, row, hits, brand_cfg, rules) -> None:
+    """Fill a record with NO brand-site master from GTIN-anchored retailer
+    hits (generic resolver). Retailer-primary policy: a field is GREEN only
+    when two independent retailer families agree; a single family = yellow;
+    everything else stays fail-closed. INCI single family = yellow (kit 6.5).
+    """
+    from datetime import UTC, datetime
+
+    from bsb.categorize.rules import categorize, color_code_for
+    from bsb.normalize.boozt import normalize_color_name, normalize_size, normalize_style_name
+    from bsb.validate.matrix import clean_retail_name, compare_inci, shades_agree, similarity
+
+    brand = str(brand_cfg.get("display_name", ""))
+    anchored = [h for h in hits if h.gtin_anchored]  # already ≤1 per family
+    now = datetime.now(UTC)
+
+    def ref(h):
+        return SourceRef(url=h.url, method="dom", fetched_at=now, snippet=f"{h.family}: {h.name}")
+
+    if not anchored:
+        for f in ("style_name", "color_name", "size", "ingredients"):
+            getattr(record, f).notes = "no GTIN-anchored retailer family found (retailer-primary)"
+        return
+
+    # --- style_name: two families whose cleaned names match -> green
+    named = [(h, clean_retail_name(h.name or "", brand)) for h in anchored if h.name]
+    if named:
+        base = named[0]
+        agree = [
+            h
+            for h, c in named
+            if similarity(base[1], c) >= 0.6 or base[1].casefold() in c.casefold()
+        ]
+        value = normalize_style_name(base[0].name, brand_cfg)
+        if len(agree) >= 2:
+            record.style_name = FieldValue(
+                value=value,
+                status="VERIFIED",
+                primary=ref(base[0]),
+                secondary=ref(agree[1]),
+                notes=f"two retailer families agree ({base[0].family}, {agree[1].family})",
+            )
+        else:
+            record.style_name = FieldValue(
+                value=value,
+                status="SINGLE_SOURCE",
+                primary=ref(base[0]),
+                notes=f"single retailer family ({base[0].family}); retailer-primary",
+            )
+
+    # --- size: normalized agreement across families
+    sizes = [(h, normalize_size(h.size)) for h in anchored if normalize_size(h.size)]
+    if sizes:
+        first = sizes[0]
+        agree = [h for h, s in sizes if s == first[1]]
+        record.size = FieldValue(
+            value=first[1],
+            status="VERIFIED" if len(agree) >= 2 else "SINGLE_SOURCE",
+            primary=ref(first[0]),
+            secondary=ref(agree[1]) if len(agree) >= 2 else None,
+            notes=("two retailer families agree" if len(agree) >= 2 else "single retailer family")
+            + " (retailer-primary)",
+        )
+
+    # --- color_name: retailer shade if present (2 agree -> green); else leave
+    shaded = [(h, normalize_color_name(h.color, brand_cfg)) for h in anchored if h.color]
+    if shaded:
+        first = shaded[0]
+        agree = [h for h, c in shaded if shades_agree(c or "", first[1] or "")]
+        record.color_name = FieldValue(
+            value=first[1],
+            status="VERIFIED" if len(agree) >= 2 else "SINGLE_SOURCE",
+            primary=ref(first[0]),
+            secondary=ref(agree[1]) if len(agree) >= 2 else None,
+            notes=("two retailer families agree" if len(agree) >= 2 else "single retailer family")
+            + " (retailer-primary)",
+        )
+
+    # --- ingredients: retailer INCI (2 families base-list identical -> green)
+    inci_hits = [h for h in anchored if h.inci]
+    if inci_hits:
+        first = inci_hits[0]
+        inci_boozt = first.inci.replace(" · ", ", ").replace(" • ", ", ").strip(" ,")
+        agree_fam = next(
+            (h for h in inci_hits[1:] if compare_inci(first.inci, h.inci)[0] == "identical"), None
+        )
+        record.ingredients = FieldValue(
+            value=inci_boozt,
+            status="VERIFIED" if agree_fam else "SINGLE_SOURCE",
+            primary=ref(first),
+            secondary=ref(agree_fam) if agree_fam else None,
+            notes=(
+                f"two retailer families agree ({first.family}, {agree_fam.family})"
+                if agree_fam
+                else f"single retailer family ({first.family})"
+            )
+            + " — retailer-primary",
+        )
+
+    # --- category/color_code/flammable from the resolved retailer name
+    name_for_cat = record.style_name.value or (named[0][0].name if named else row.base_name)
+    decision = categorize(name_for_cat or "", rules, brand_cfg)
+    if decision.category:
+        record.category = FieldValue(
+            value=decision.category,
+            status="SINGLE_SOURCE",
+            primary=ref(anchored[0]),
+            notes=f"rule {decision.rule} on retailer name; retailer-primary",
+        )
+        cc = color_code_for(
+            decision.category, record.color_name.value or row.shade, rules, brand_cfg, name_for_cat
+        )
+        record.color_code = _color_code_field(cc, rules)
+        if decision.category not in rules["dg_trigger_categories"]:
+            record.flammable = FieldValue(
+                value="No",
+                status="SINGLE_SOURCE",
+                notes=f"default for non-DG category {decision.category!r} (retailer-primary)",
+            )
+
+
 def apply_resolution(
     record: ProductRecord,
     row: OdmRow,
