@@ -272,8 +272,9 @@ def apply_resolution(
     resolved,  # ResolvedEan | None
     brand_cfg: dict,
     rules: dict,
-    lf_product=None,  # LfProduct | None
-    weak_inci=None,  # WeakInci | None
+    lf_product=None,  # LfProduct | None (validator family: name/shade/size)
+    weak_inci=None,  # WeakInci | None (INCIDecoder, notes only)
+    retailer_inci=None,  # (inci_text, source_url) | None from a GTIN-anchored retailer
 ) -> list[str]:
     """Enrich a Phase 0 record with resolved brand-site data and the
     validator matrix (kit 6.5). Returns anomaly strings (site size vs ODM
@@ -473,20 +474,76 @@ def apply_resolution(
                     f"INCIDecoder weak support DISAGREES on base list [{diff}] ({weak_inci.url}) "
                     "— weak source, note only"
                 )
+        brand_inci_ref = SourceRef(
+            url=master.pdp_url,
+            method="dom",
+            fetched_at=master.fetched_at or datetime.now(UTC),
+            snippet=master.inci_text[:160],
+        )
+        # a GTIN-anchored retailer INCI is an independent family: agreement on
+        # the base list -> VERIFIED green; may-contain-only diff -> yellow;
+        # base-list diff -> CONFLICT (kit 6.5)
+        ret_text, ret_url = retailer_inci or (None, None)
+        if ret_text:
+            verdict, diff = compare_inci(master.inci_text, ret_text)
+            ret_ref = SourceRef(
+                url=ret_url, method="dom", fetched_at=datetime.now(UTC), snippet=ret_text[:160]
+            )
+            if verdict == "identical":
+                record.ingredients = FieldValue(
+                    value=inci_boozt,
+                    status="VERIFIED",
+                    primary=brand_inci_ref,
+                    secondary=ret_ref,
+                    notes="; ".join([*notes, f"retailer INCI base-list identical ({ret_url})"]),
+                )
+            elif verdict == "may_contain_diff":
+                record.ingredients = FieldValue(
+                    value=inci_boozt,
+                    status="SINGLE_SOURCE",
+                    primary=brand_inci_ref,
+                    secondary=ret_ref,
+                    notes="; ".join([*notes, f"retailer may-contain differs [{diff}] ({ret_url})"]),
+                )
+            else:
+                record.ingredients = FieldValue(
+                    value=None,
+                    status="CONFLICT",
+                    primary=brand_inci_ref,
+                    secondary=ret_ref,
+                    notes="; ".join(
+                        [*notes, f"CONFLICT: retailer base list differs [{diff}] ({ret_url})"]
+                    ),
+                )
+        else:
+            record.ingredients = FieldValue(
+                value=inci_boozt,
+                status="SINGLE_SOURCE",
+                primary=brand_inci_ref,
+                notes="; ".join(notes),
+            )
+    elif retailer_inci and retailer_inci[0]:
+        # brand site carries no INCI — a single GTIN-anchored retailer is the
+        # only source: ships yellow (kit 6.5 single family)
+        ret_text, ret_url = retailer_inci
+        inci_boozt = (
+            ret_text.replace(" · ", ", ")
+            .replace(" • ", ", ")
+            .replace("·", ",")
+            .replace("•", ",")
+            .strip(" ,")
+        )
         record.ingredients = FieldValue(
             value=inci_boozt,
             status="SINGLE_SOURCE",
             primary=SourceRef(
-                url=master.pdp_url,
-                method="dom",
-                fetched_at=master.fetched_at or datetime.now(UTC),
-                snippet=master.inci_text[:160],
+                url=ret_url, method="dom", fetched_at=datetime.now(UTC), snippet=ret_text[:160]
             ),
-            notes="; ".join(notes),
+            notes=f"brand site has no INCI; single GTIN-anchored retailer source ({ret_url})",
         )
     else:
         record.ingredients = FieldValue(
-            status="NOT_FOUND", primary=nars_ref, notes="no INGREDIENTS accordion on brand PDP"
+            status="NOT_FOUND", primary=nars_ref, notes="no INGREDIENTS on brand PDP or retailer"
         )
 
     # --- category: brand's own name is the taxonomy signal, ODM only fallback

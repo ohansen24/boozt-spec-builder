@@ -144,6 +144,7 @@ def run(
         template_path,
         out_path,
         cache_dir,
+        config_dir,
         run_meta,
         do_validate,
         show_variants,
@@ -162,6 +163,7 @@ def _run_resolved(
     template_path,
     out_path,
     cache_dir,
+    config_dir,
     run_meta,
     do_validate,
     show_variants,
@@ -231,6 +233,7 @@ def _run_resolved(
         for ean, res in resolution.by_ean.items():
             if res.ok and res.master is not None:
                 rep_ean_by_master.setdefault(res.master.master_id, (ean, res.master))
+        generic_by_line: dict = {}  # product_name -> (LfProduct-shaped, (inci_text, url))
         if do_validate:
             lf = LookfantasticValidator(fetcher, playwright)
             inci_weak = IncidecoderWeak(fetcher)
@@ -250,6 +253,21 @@ def _run_resolved(
                     str(brand_cfg.get("display_name", brand_key)), master.product_name
                 )
 
+            # validator-of-last-resort: if the configured pool found nothing for
+            # this brand, let the generic resolver discover retailer families
+            # (search -> GTIN-anchored PDP). Deduped per product line (INCI and
+            # name are shared across a line's sizes); cache-first, capped.
+            if not any(lf_by_master.values()):
+                generic_by_line = _generic_validator_pass(
+                    resolution,
+                    brand_cfg,
+                    brand_key,
+                    fetcher,
+                    config_dir,
+                    run_meta,
+                    progress=lambda m: click.echo("  " + m),
+                )
+
         conflict_cells = 0
         compared_cells = 0
         size_anomalies: list[str] = []
@@ -260,8 +278,13 @@ def _run_resolved(
             master_id = resolved.master.master_id if (resolved and resolved.master) else None
             lf_product = lf_by_master.get(master_id)
             weak = inci_by_master.get(master_id)
+            retailer_inci = None
+            if lf_product is None and resolved and resolved.master:
+                gen = generic_by_line.get(resolved.master.product_name)
+                if gen:
+                    lf_product, retailer_inci = gen
             size_anomalies += apply_resolution(
-                record, row, resolved, brand_cfg, rules, lf_product, weak
+                record, row, resolved, brand_cfg, rules, lf_product, weak, retailer_inci
             )
             for field in ("style_name", "color_name", "size"):
                 fv = getattr(record, field)
@@ -334,6 +357,89 @@ def _run_resolved(
     finally:
         fetcher.close()
         playwright.close()
+
+
+def _generic_validator_pass(
+    resolution, brand_cfg, brand_key, fetcher, config_dir, run_meta, progress
+):
+    """Generic resolver as validator-of-last-resort (pool had zero coverage).
+    Per distinct product line: search -> GTIN-anchored retailer PDP -> a
+    validator family (name/shade/size, as an LfProduct) + retailer INCI.
+    Records working families into validators.yaml; reports Firecrawl credits."""
+    from bsb.fetch.firecrawl import FirecrawlClient
+    from bsb.resolve.generic import GenericResolver
+    from bsb.resolve.validators import LfProduct, LfVariant
+
+    firecrawl = FirecrawlClient(fetcher.cache, fetcher.limiter)
+    if not firecrawl.available:
+        progress("generic validator unavailable (no FIRECRAWL_API_KEY) — skipping")
+        return {}
+    resolver = GenericResolver(fetcher, firecrawl)
+    brand = str(brand_cfg.get("search_brand") or brand_cfg.get("display_name") or brand_key)
+
+    # one representative EAN per product line (INCI/name shared across sizes)
+    rep_by_line: dict[str, str] = {}
+    for _ean, res in resolution.by_ean.items():
+        if res.ok and res.master is not None:
+            rep_by_line.setdefault(res.master.product_name, res.ean12)
+
+    usage0 = firecrawl.snapshot_usage()
+    generic_by_line: dict = {}
+    families: dict[str, int] = {}
+    progress(f"validator-of-last-resort: generic resolver over {len(rep_by_line)} product lines…")
+    for line, ean12 in rep_by_line.items():
+        gtin13 = ean12 if len(ean12) == 13 else "0" + ean12
+        hits = resolver.resolve(gtin13, ean12, brand, max_pages=3)
+        anchored = [h for h in hits if h.gtin_anchored]
+        for h in anchored:
+            families[h.family] = families.get(h.family, 0) + 1
+        best_named = next((h for h in anchored if h.name), None)
+        best_inci = next((h for h in anchored if h.inci), None)
+        lf_shaped = None
+        if best_named:
+            lf_shaped = LfProduct(
+                url=best_named.url,
+                product_name=best_named.name,
+                size_text=best_named.size,
+                by_barcode={ean12: LfVariant(barcode=ean12, shade=best_named.color)},
+            )
+        retailer_inci = (best_inci.inci, best_inci.url) if best_inci else None
+        if lf_shaped or retailer_inci:
+            generic_by_line[line] = (lf_shaped, retailer_inci)
+        progress(
+            f"  {line[:38]}: "
+            + (f"{len(anchored)} anchored" if anchored else "no anchored family")
+            + (" +INCI" if retailer_inci else "")
+        )
+
+    used = firecrawl.usage_since(usage0)
+    run_meta["generic validator credits"] = (
+        f"{used['scrapes']} scrapes, {used['searches']} searches "
+        f"({used['search_results']} results), {used['cache_hits']} cache hits"
+    )
+    # record working families as this brand's validator pool for next time
+    if families:
+        top = sorted(families, key=lambda f: -families[f])
+        run_meta["discovered validator families"] = ", ".join(f"{f}({families[f]})" for f in top)
+        _record_validator_pool(config_dir, brand_key, top, progress)
+    return generic_by_line
+
+
+def _record_validator_pool(config_dir, brand_key, families, progress) -> None:
+    """Append the discovered retailer families to config/validators.yaml as
+    the brand's pool, so the next order tries them directly."""
+    import yaml
+
+    path = config_dir / "validators.yaml"
+    try:
+        data = yaml.safe_load(path.read_text()) or {}
+    except FileNotFoundError:
+        data = {}
+    discovered = data.setdefault("discovered_pools", {})
+    if discovered.get(brand_key) != families:
+        discovered[brand_key] = families
+        path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
+        progress(f"recorded validator pool for {brand_key}: {', '.join(families[:5])}")
 
 
 def _print_variant_tables(resolution, lf_by_master, odm) -> None:
