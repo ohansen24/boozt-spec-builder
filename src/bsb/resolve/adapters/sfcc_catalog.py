@@ -219,6 +219,27 @@ class SfccCatalogAdapter:
         return None
 
     @classmethod
+    def _size_volume(cls, product: dict) -> str | None:
+        """The SELECTED variant's real volume from its size attribute
+        `description` ("5.0 mL / 0.17 US fl. oz." -> "5.0 ml") — brand
+        authority, per-variant (no full/mini guessing). The size axis
+        displayValue is only a label ("Full Size"); this is the actual volume
+        the size cell needs. Returns None when no metric volume is published."""
+        sel = (product.get("selectedVariationAttributes") or {}).get("size") or {}
+        desc = sel.get("description") if isinstance(sel, dict) else None
+        if not desc:
+            attr = cls._attr(product, "size")
+            if attr:
+                desc = next(
+                    (v.get("description") for v in attr.get("values") or [] if v.get("selected")),
+                    None,
+                )
+        if not desc:
+            return None
+        m = re.search(r"(\d+(?:\.\d+)?)\s?(mL|ml|ML|g|G)\b", desc)
+        return f"{m.group(1)} {m.group(2).lower()}" if m else None
+
+    @classmethod
     def _selected_hex(cls, product: dict) -> str | None:
         """The selected color value's `value` — a hex on Benefit's swatch axes
         (e.g. 'F6DECE'). Feeds the Stage 2 swatch-hex color-code proposer."""
@@ -311,7 +332,9 @@ class SfccCatalogAdapter:
             return result
 
         shade, _has_color_axis, unresolved = self._shade(product, entry.hex)
-        size_text = self._selected(product, "size")
+        # prefer the real per-variant volume ("5.0 ml") over the axis label
+        # ("Full Size") — brand-authority size (Lever 1)
+        size_text = self._size_volume(product) or self._selected(product, "size")
         product_name = str(product.get("productName") or entry.product_name or "").strip()
 
         family_market = None

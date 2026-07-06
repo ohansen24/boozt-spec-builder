@@ -451,6 +451,20 @@ def _run_resolved(
                 run_meta,
                 progress=lambda m: click.echo("  " + m),
             )
+            # field-completion: fill INCI/size still red on RESOLVED rows from
+            # the multi-retailer fan-out (the brand resolved name/shade but not
+            # these fields). Same retailer opt-in; market-gated, credit-metered.
+            _field_completion_pass(
+                records,
+                by_ean_row,
+                resolution,
+                brand_cfg,
+                brand_key,
+                rules,
+                fetcher,
+                run_meta,
+                progress=lambda m: click.echo("  " + m),
+            )
 
         if size_anomalies:
             click.echo(
@@ -568,6 +582,82 @@ def _retailer_primary_pass(
     )
     run_meta["retailer-fallback recovered"] = f"{recovered}/{len(unresolved)} unresolved rows"
     progress(f"retailer-fallback: recovered {recovered}/{len(unresolved)} unresolved rows")
+
+
+def _field_completion_pass(
+    records, by_ean_row, resolution, brand_cfg, brand_key, rules, fetcher, run_meta, progress
+):
+    """Lever 2 (Oli coverage): a RESOLVED row can still be missing INCI or size
+    that other sites plainly have — the brand resolved name/shade but carries no
+    INCI. Fan out the generic multi-retailer resolver for such rows and fill ONLY
+    the still-red fields, GTIN-anchored and market-gated (EU/UK-preferred INCI,
+    two-families -> green). Deduped per master (INCI is a product-level datum);
+    size is per-variant so it fills only the resolved rep. Never overwrites a
+    filled cell; credit-metered; cache-first."""
+    from bsb.fetch.firecrawl import FirecrawlClient
+    from bsb.pipeline import build_retailer_inci_field, build_retailer_size_field
+    from bsb.resolve.generic import GenericResolver
+
+    firecrawl = FirecrawlClient(fetcher.cache, fetcher.limiter)
+    if not firecrawl.available:
+        progress("field-completion unavailable (no FIRECRAWL_API_KEY) — skipping")
+        return
+    resolver = GenericResolver(fetcher, firecrawl)
+    brand = str(brand_cfg.get("search_brand") or brand_cfg.get("display_name") or brand_key)
+
+    # group resolved rows still missing INCI/size by master (INCI shared per line)
+    by_master: dict = {}
+    for record in records:
+        res = resolution.by_ean.get(record.ean12)
+        if not (res and res.ok and res.master):
+            continue
+        if record.ingredients.status == "NOT_FOUND" or record.size.status == "NOT_FOUND":
+            by_master.setdefault(res.master.master_id, []).append(record)
+    if not by_master:
+        return
+
+    usage0 = firecrawl.snapshot_usage()
+    tick = _Progress(len(by_master), "field-complete", fetcher=fetcher, firecrawl=firecrawl)
+    inci_filled = size_filled = 0
+    for group in by_master.values():
+        rep = group[0]
+        hits = [h for h in resolver.resolve(rep.gtin13, rep.ean12, brand, max_pages=5)
+                if h.gtin_anchored]
+        inci_fv = build_retailer_inci_field(hits, _hit_ref) if hits else None
+        # INCI is product-level -> apply to every still-red row of the master
+        if inci_fv:
+            for rec in group:
+                if rec.ingredients.status == "NOT_FOUND":
+                    rec.ingredients = inci_fv.model_copy()
+                    inci_filled += 1
+        # size is per-variant -> only the resolved rep (anchored to its GTIN)
+        if rep.size.status == "NOT_FOUND":
+            size_fv = build_retailer_size_field(hits, _hit_ref) if hits else None
+            if size_fv:
+                rep.size = size_fv
+                size_filled += 1
+        tick(f"{rep.style_name.value or rep.ean12}: {len(hits)} families"
+             + (" +INCI" if inci_fv else ""))
+    used = firecrawl.usage_since(usage0)
+    run_meta["field-completion"] = (
+        f"+{inci_filled} INCI, +{size_filled} size on resolved rows across {len(by_master)} "
+        f"masters; {used['scrapes']} scr, {used['searches']} srch, {used['cache_hits']} cache"
+    )
+    progress(
+        f"field-completion: +{inci_filled} INCI, +{size_filled} size "
+        f"({used['scrapes']}scr/{used['searches']}srch)"
+    )
+
+
+def _hit_ref(h):
+    """SourceRef for a generic ResolverHit (field-completion provenance)."""
+    from datetime import UTC, datetime
+
+    from bsb.models import SourceRef
+
+    return SourceRef(
+        url=h.url, method="dom", fetched_at=datetime.now(UTC), snippet=f"{h.family}: {h.name}"
+    )
 
 
 def _generic_validator_pass(

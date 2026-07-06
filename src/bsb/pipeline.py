@@ -306,6 +306,80 @@ def _size_from_title(name: str | None):
     return normalize_size(f"{number} {unit}")
 
 
+def build_retailer_inci_field(anchored, ref):
+    """INCI FieldValue from GTIN-anchored retailer hits under the EU-registered
+    gate: EU/UK families preferred; two independent families agreeing -> green;
+    a single EU/UK family -> yellow; only non-EU sources -> yellow with the
+    allergen caveat (never green). None when no hit carries INCI. Shared by the
+    retailer-primary pass and the field-completion pass so the reliability rule
+    lives in one place."""
+    from bsb.resolve.market import is_eu_market
+    from bsb.validate.matrix import compare_inci
+
+    inci_hits = [h for h in anchored if h.inci]
+    if not inci_hits:
+        return None
+
+    def _boozt(t):
+        return t.replace(" · ", ", ").replace(" • ", ", ").strip(" ,")
+
+    eu = [h for h in inci_hits if is_eu_market(h.market)]
+    if eu:
+        first = eu[0]
+        agree = next(
+            (
+                h
+                for h in inci_hits
+                if h.family != first.family and compare_inci(first.inci, h.inci)[0] == "identical"
+            ),
+            None,
+        )
+        return FieldValue(
+            value=_boozt(first.inci),
+            status="VERIFIED" if agree else "SINGLE_SOURCE",
+            primary=ref(first),
+            secondary=ref(agree) if agree else None,
+            notes=(
+                f"two families agree, EU-sourced ({first.family}[{first.market}], "
+                f"{agree.family}[{agree.market}])"
+                if agree
+                else f"single EU/UK retailer family ({first.family}[{first.market}])"
+            )
+            + " — retailer",
+        )
+    first = inci_hits[0]
+    return FieldValue(
+        value=_boozt(first.inci),
+        status="SINGLE_SOURCE",
+        primary=ref(first),
+        notes=f"non-EU market source ({first.family}[{first.market}]) — EU list may declare "
+        "additional allergens; retailer",
+    )
+
+
+def build_retailer_size_field(anchored, ref):
+    """Size FieldValue from retailer hits: normalized-agreement across families
+    (two agree -> green, one -> yellow), harvesting the size from the retail
+    title when no explicit size field. None when no size is present."""
+    from bsb.normalize.boozt import normalize_size
+
+    sizes = [(h, normalize_size(h.size)) for h in anchored if normalize_size(h.size)]
+    if not sizes:
+        sizes = [(h, s) for h in anchored if (s := _size_from_title(h.name))]
+    if not sizes:
+        return None
+    first = sizes[0]
+    agree = [h for h, s in sizes if s == first[1]]
+    return FieldValue(
+        value=first[1],
+        status="VERIFIED" if len(agree) >= 2 else "SINGLE_SOURCE",
+        primary=ref(first[0]),
+        secondary=ref(agree[1]) if len(agree) >= 2 else None,
+        notes=("two retailer families agree" if len(agree) >= 2 else "single retailer family")
+        + " (retailer)",
+    )
+
+
 def apply_retailer_primary(record, row, hits, brand_cfg, rules) -> None:
     """Fill a record with NO brand-site master from GTIN-anchored retailer
     hits (generic resolver). Retailer-primary policy: a field is GREEN only
@@ -315,10 +389,9 @@ def apply_retailer_primary(record, row, hits, brand_cfg, rules) -> None:
     from datetime import UTC, datetime
 
     from bsb.categorize.rules import categorize, color_code_for
-    from bsb.normalize.boozt import normalize_color_name, normalize_size, normalize_style_name
-    from bsb.resolve.market import is_eu_market
+    from bsb.normalize.boozt import normalize_color_name, normalize_style_name
     from bsb.validate.language import is_english_name
-    from bsb.validate.matrix import clean_retail_name, compare_inci, shades_agree, similarity
+    from bsb.validate.matrix import clean_retail_name, shades_agree, similarity
 
     brand = str(brand_cfg.get("display_name", ""))
     anchored = [h for h in hits if h.gtin_anchored]  # already ≤1 per family
@@ -369,22 +442,10 @@ def apply_retailer_primary(record, row, hits, brand_cfg, rules) -> None:
             notes=f"only non-English sources found ({h0.language or '?'}, {h0.url})",
         )
 
-    # --- size: normalized agreement across families; harvest from the retail
-    # title when no explicit size field (titles embed "750 ml", "1000 мл")
-    sizes = [(h, normalize_size(h.size)) for h in anchored if normalize_size(h.size)]
-    if not sizes:
-        sizes = [(h, s) for h in anchored if (s := _size_from_title(h.name))]
-    if sizes:
-        first = sizes[0]
-        agree = [h for h, s in sizes if s == first[1]]
-        record.size = FieldValue(
-            value=first[1],
-            status="VERIFIED" if len(agree) >= 2 else "SINGLE_SOURCE",
-            primary=ref(first[0]),
-            secondary=ref(agree[1]) if len(agree) >= 2 else None,
-            notes=("two retailer families agree" if len(agree) >= 2 else "single retailer family")
-            + " (retailer-primary)",
-        )
+    # --- size: normalized agreement / title harvest (shared builder)
+    size_fv = build_retailer_size_field(anchored, ref)
+    if size_fv is not None:
+        record.size = size_fv
 
     # --- color_name: English required, same policy as style_name
     shaded_all = [(h, normalize_color_name(h.color, brand_cfg)) for h in anchored if h.color]
@@ -408,51 +469,10 @@ def apply_retailer_primary(record, row, hits, brand_cfg, rules) -> None:
             notes=f"only non-English shade sources found ({h0.language or '?'}, {h0.url})",
         )
 
-    # --- ingredients: EU-registered INCI required (Boozt guide). Prefer EU/UK
-    # retailer families; a non-EU list ships yellow with an allergen caveat and
-    # NEVER greens on non-EU agreement alone — the EU list may declare extra
-    # allergens the US/other market omits. GTIN still anchors identity; market
-    # only gates whether the list is regulatory-complete.
-    inci_hits = [h for h in anchored if h.inci]
-    eu_inci = [h for h in inci_hits if is_eu_market(h.market)]
-    if eu_inci:
-        first = eu_inci[0]
-        inci_boozt = first.inci.replace(" · ", ", ").replace(" • ", ", ").strip(" ,")
-        # any independent family (EU or not) that agrees corroborates an
-        # EU-sourced value -> green; else single EU family -> yellow
-        agree_fam = next(
-            (
-                h
-                for h in inci_hits
-                if h.family != first.family and compare_inci(first.inci, h.inci)[0] == "identical"
-            ),
-            None,
-        )
-        record.ingredients = FieldValue(
-            value=inci_boozt,
-            status="VERIFIED" if agree_fam else "SINGLE_SOURCE",
-            primary=ref(first),
-            secondary=ref(agree_fam) if agree_fam else None,
-            notes=(
-                f"two families agree, EU-sourced ({first.family}[{first.market}], "
-                f"{agree_fam.family}[{agree_fam.market}])"
-                if agree_fam
-                else f"single EU/UK retailer family ({first.family}[{first.market}])"
-            )
-            + " — retailer-primary",
-        )
-    elif inci_hits:
-        # only non-EU market sources: ship the list yellow with the caveat,
-        # never green (agreement among non-EU sources does not make it EU-reg)
-        first = inci_hits[0]
-        inci_boozt = first.inci.replace(" · ", ", ").replace(" • ", ", ").strip(" ,")
-        record.ingredients = FieldValue(
-            value=inci_boozt,
-            status="SINGLE_SOURCE",
-            primary=ref(first),
-            notes=f"non-EU market source ({first.family}[{first.market}]) — EU list may declare "
-            "additional allergens; retailer-primary",
-        )
+    # --- ingredients: EU-registered INCI gate (shared builder)
+    inci_fv = build_retailer_inci_field(anchored, ref)
+    if inci_fv is not None:
+        record.ingredients = inci_fv
 
     # --- category/color_code/flammable from the resolved retailer name
     name_for_cat = record.style_name.value or (named[0][0].name if named else row.base_name)
