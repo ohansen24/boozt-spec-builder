@@ -129,6 +129,9 @@ class RunSummary(BaseModel):
     records: int
     status_totals: dict[str, int] = Field(default_factory=dict)
     category_totals: dict[str, int] = Field(default_factory=dict)
+    # NOT_FOUND split by failure class (Oli distinction): field -> count
+    extraction_miss: dict[str, int] = Field(default_factory=dict)
+    no_source: dict[str, int] = Field(default_factory=dict)
     review_red: list[ReviewItem] = Field(default_factory=list)
     review_yellow: list[ReviewItem] = Field(default_factory=list)
     cleared_template_rows: int = 0
@@ -221,6 +224,13 @@ def write_output(
     cleared = _clear_data_rows(ws, tmap)
 
     status_counter: Counter[str] = Counter()
+    # Oli distinction: a red cell backed by an anchored source (has a primary
+    # SourceRef) is an EXTRACTION MISS — we reached the product page but pulled
+    # nothing (an extractor/source-selection problem). A red cell with no
+    # source is NO SOURCE FOUND (a discovery problem). Counted separately so
+    # the two failure classes never blur together in a run report.
+    anchored_miss: Counter[str] = Counter()
+    no_source: Counter[str] = Counter()
     category_counter: Counter[str] = Counter()
     review: list[tuple[int, ReviewItem]] = []
     provenance_rows: list[list[object]] = []
@@ -249,6 +259,8 @@ def write_output(
                     cell.fill = fill
 
                 status_counter[fv.status] += 1
+                if fv.status == "NOT_FOUND":
+                    (anchored_miss if fv.primary is not None else no_source)[field] += 1
                 rank = _STATUS_RANK.get(fv.status)
                 settled_manual = fv.status == "MANUAL" and (fv.value or _by_design_blank(fv))
                 if rank is not None and not settled_manual:
@@ -343,6 +355,16 @@ def write_output(
     for status, count in sorted(status_counter.items()):
         report.append([status, count])
     report.append([])
+    report.append(["red cells by failure class", "cells"])
+    report.append(
+        ["extraction miss (anchored source, nothing extracted)", sum(anchored_miss.values())]
+    )
+    for field, count in sorted(anchored_miss.items(), key=lambda kv: -kv[1]):
+        report.append([f"  extraction miss · {field}", count])
+    report.append(["no source found (no anchored page)", sum(no_source.values())])
+    for field, count in sorted(no_source.items(), key=lambda kv: -kv[1]):
+        report.append([f"  no source · {field}", count])
+    report.append([])
     report.append(["category", "rows"])
     for category, count in sorted(category_counter.items()):
         report.append([category, count])
@@ -365,6 +387,8 @@ def write_output(
         records=len(records),
         status_totals=dict(status_counter),
         category_totals=dict(category_counter),
+        extraction_miss=dict(anchored_miss),
+        no_source=dict(no_source),
         review_red=review_red,
         review_yellow=review_yellow,
         cleared_template_rows=cleared,

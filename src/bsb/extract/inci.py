@@ -30,11 +30,18 @@ _SPLIT = re.compile(r"\s*[,·•;]\s*")
 _TAGS = re.compile(r"<[^>]+>")
 
 # plausible leading ingredients (most cosmetic formulas open with one of these
-# classes; power sources for the "is this really an INCI list" test)
+# classes; power sources for the "is this really an INCI list" test). Includes
+# aerosol propellants — dry shampoos, hairsprays, mousses and spray deodorants
+# legitimately lead with butane/propane/hydrofluorocarbon, not Aqua (seen live:
+# Maria Nila dry shampoos rejected valid propellant-led INCI).
 _LEAD_TOKENS = re.compile(
     r"^(aqua|water|eau|alcohol|glycerin|glycerine|dimethicone|isododecane|talc"
     r"|paraffinum|petrolatum|butyrospermum|caprylic|hydrogenated|squalane"
-    r"|cyclopentasiloxane|mineral oil|sodium|zinc oxide|titanium dioxide)\b",
+    r"|cyclopentasiloxane|mineral oil|sodium|zinc oxide|titanium dioxide"
+    r"|butane|isobutane|propane|isopentane|pentane|dimethyl ether"
+    r"|hydrofluorocarbon|hydrofluoroolefin|propylene glycol|propanediol"
+    r"|cocamidopropyl|coco-glucoside|decyl glucoside|cyclohexasiloxane"
+    r"|c\d)\b",
     re.IGNORECASE,
 )
 _MARKETING = re.compile(
@@ -50,15 +57,23 @@ class InciCandidate(BaseModel):
     tokens: int
 
 
-def inci_plausible(text: str) -> tuple[bool, str]:
-    """Nomenclature-shaped, plausible lead, no prose, not truncated."""
+def inci_plausible(text: str, labeled: bool = False) -> tuple[bool, str]:
+    """Nomenclature-shaped, plausible lead, no prose, not truncated.
+
+    ``labeled`` = the block was found under an explicit "Ingredients:"/"INCI:"
+    label. That label is authoritative that this IS an ingredient list, so the
+    narrow leading-ingredient whitelist (a proxy used to GUESS unlabeled
+    blocks) is skipped — otherwise valid lists that open with an ingredient not
+    in the whitelist (aerosol propellants, Cyclomethicone-led oils, starch-led
+    powders) are wrongly rejected. The structural guards (token count, no
+    marketing prose, no mid-list truncation) still apply either way."""
     cleaned = " ".join(text.split())
     if len(cleaned) < 40:
         return False, "too short"
     tokens = [t for t in _SPLIT.split(cleaned) if t.strip()]
     if len(tokens) < 5:
         return False, f"only {len(tokens)} separator-delimited tokens"
-    if not _LEAD_TOKENS.match(tokens[0].strip("[](): ")):
+    if not labeled and not _LEAD_TOKENS.match(tokens[0].strip("[](): ")):
         return False, f"implausible leading ingredient {tokens[0][:30]!r}"
     prose = [t for t in tokens if _MARKETING.search(t) or len(t.split()) > 7]
     if len(prose) > max(1, len(tokens) // 10):
@@ -87,7 +102,7 @@ def extract_inci_from_html(html: str) -> InciCandidate | None:
             continue
         for sibling in list(element.find_next_siblings())[:3]:
             text = _text_of(sibling)
-            ok, _ = inci_plausible(text)
+            ok, _ = inci_plausible(text, labeled=True)
             if ok:
                 candidates.append(
                     InciCandidate(text=text, source="labeled-section", tokens=text.count(",") + 1)
@@ -100,7 +115,7 @@ def extract_inci_from_html(html: str) -> InciCandidate | None:
                 text = _LABEL_INLINE.sub("", text, count=1)
                 # drop the bare label if it leads the text
                 text = re.sub(_LABEL, "", text).strip()
-                ok, _ = inci_plausible(text)
+                ok, _ = inci_plausible(text, labeled=True)
                 if ok:
                     candidates.append(
                         InciCandidate(
@@ -113,7 +128,7 @@ def extract_inci_from_html(html: str) -> InciCandidate | None:
     flat = " ".join(flat.split())
     for match in _LABEL_INLINE.finditer(flat):
         segment = flat[match.end() : match.end() + 4000]
-        # stop at the next obvious section heading
+        # stop at the next obvious section heading …
         stop = re.search(
             r"(?:How to use|Anwendung|Anwendungshinweise|Hinweis|Conseils|Avis|Reviews"
             r"|Warnings|Utilisation|Précautions|La liste des ingrédients"
@@ -123,8 +138,16 @@ def extract_inci_from_html(html: str) -> InciCandidate | None:
         )
         if stop:
             segment = segment[: stop.start()]
-        segment = segment.strip()
-        ok, _ = inci_plausible(segment)
+        # … and at inline CSS/JS that follows the list (Shopify inlines a
+        # <style> block right after the ingredients <p>; tag-stripping runs the
+        # CSS into the list and the plausibility lint reads it as prose)
+        css = re.search(
+            r"(?:@media|@font-face|@keyframes|/\*|<style|\bfunction\s*\(|[{}])", segment
+        )
+        if css:
+            segment = segment[: css.start()]
+        segment = segment.strip().rstrip(",;· ")
+        ok, _ = inci_plausible(segment, labeled=True)
         if ok:
             candidates.append(
                 InciCandidate(text=segment, source="inline-label", tokens=segment.count(",") + 1)

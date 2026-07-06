@@ -288,12 +288,51 @@ def resolve_order_sfcc_catalog(
     return result
 
 
-def _wrap_shopify_hit(row: OdmRow, hit, brand_cfg: dict, source_domain: str | None = None):
+def _shopify_inci(hit, fetcher):
+    """INCI for a Shopify hit, GTIN-anchored by the barcode == GTIN match.
+    Source ladder: (1) products.json/handle.js body_html, then — because some
+    brands (Maria Nila) render the INCI in a PDP accordion/metafield that is
+    NOT in the description — (2) the rendered PDP fetched via httpx, then
+    (3) one escalation up the fetch ladder (Playwright/Firecrawl) for a PDP
+    that came back a bot-shell. An anchored page yielding no parseable INCI is
+    an extraction miss, distinct from no page at all."""
+    from bsb.extract.inci import extract_inci_from_html
+    from bsb.fetch.ladder import FetchError
+
+    if hit.body_html:
+        got = extract_inci_from_html(hit.body_html)
+        if got:
+            return got
+    if fetcher is not None and hit.product_url:
+        try:
+            page = fetcher.get(hit.product_url)
+        except FetchError:
+            page = None
+        if page is not None:
+            got = extract_inci_from_html(page.text)
+            if got:
+                return got
+            # rung 3: escalate a thin/under-rendered PDP once, if we can
+            if len(page.text) < 20000:
+                scrape = getattr(fetcher, "escalate_scrape", None)
+                if callable(scrape):
+                    try:
+                        rendered = scrape(hit.product_url)
+                        got = extract_inci_from_html(rendered.text)
+                        if got:
+                            return got
+                    except FetchError:
+                        pass
+    return None
+
+
+def _wrap_shopify_hit(
+    row: OdmRow, hit, brand_cfg: dict, source_domain: str | None = None, fetcher=None
+):
     """Wrap a Shopify variant hit into the shared MasterResult/VariantResult so
     apply_resolution is unchanged. Shade/size come from the option axis when
-    present, else the title/slug. INCI is extracted from body_html
-    (GTIN-anchored by the barcode == GTIN match)."""
-    from bsb.extract.inci import extract_inci_from_html
+    present, else the title/slug. INCI follows the _shopify_inci source ladder
+    (body_html -> rendered PDP -> escalation)."""
     from bsb.resolve.adapters.shopify import _SHADE_OPTIONS, _SIZE_OPTIONS, parse_shopify_title
 
     axis_shade = next(
@@ -307,7 +346,7 @@ def _wrap_shopify_hit(row: OdmRow, hit, brand_cfg: dict, source_domain: str | No
     )
     shade = axis_shade or title_shade
     size_text = axis_size or title_size or hit.size_text
-    inci = extract_inci_from_html(hit.body_html) if hit.body_html else None
+    inci = _shopify_inci(hit, fetcher)
     via = f" (brand-family {source_domain})" if source_domain else ""
     master = MasterResult(
         master_id=hit.product_url or hit.gtin13,
@@ -367,7 +406,9 @@ def resolve_order_shopify(
         if hit is None:
             unresolved.append((row, err or "not found"))
             continue
-        master, variant, shade, has_inci = _wrap_shopify_hit(row, hit, brand_cfg)
+        master, variant, shade, has_inci = _wrap_shopify_hit(
+            row, hit, brand_cfg, fetcher=adapter.fetcher
+        )
         entry = ResolvedEan(
             ean12=row.ean12, gtin13=row.gtin13, ok=True, master=master, variant=variant
         )
@@ -393,7 +434,9 @@ def resolve_order_shopify(
             if hit is None:
                 still.append((row, prior_err))
                 continue
-            master, variant, shade, has_inci = _wrap_shopify_hit(row, hit, brand_cfg, domain)
+            master, variant, shade, has_inci = _wrap_shopify_hit(
+                row, hit, brand_cfg, domain, fetcher=fam.fetcher
+            )
             entry = ResolvedEan(
                 ean12=row.ean12, gtin13=row.gtin13, ok=True, master=master, variant=variant
             )

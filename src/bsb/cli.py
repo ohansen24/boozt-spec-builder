@@ -701,6 +701,18 @@ def _print_summary(s: RunSummary) -> None:
     for category, count in sorted(s.category_totals.items(), key=lambda kv: -kv[1]):
         click.echo(f"  {category:20} {count}")
 
+    if s.extraction_miss or s.no_source:
+        em, ns = sum(s.extraction_miss.values()), sum(s.no_source.values())
+        click.echo("\nRed cells by failure class:")
+        click.echo(f"  extraction miss (anchored source, nothing extracted): {em}")
+        if s.extraction_miss:
+            fields = sorted(s.extraction_miss.items(), key=lambda kv: -kv[1])
+            click.echo("      " + ", ".join(f"{f}={c}" for f, c in fields))
+        click.echo(f"  no source found (no anchored page): {ns}")
+        if s.no_source:
+            fields = sorted(s.no_source.items(), key=lambda kv: -kv[1])
+            click.echo("      " + ", ".join(f"{f}={c}" for f, c in fields))
+
     if s.verify_at_receipt:
         click.echo(
             f"\nVERIFY AT RECEIPT ({len(s.verify_at_receipt)} cells — warehouse checkpoint):"
