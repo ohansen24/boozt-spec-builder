@@ -86,6 +86,11 @@ class VariantResult(BaseModel):
     returned_id: str | None = None
     reject_reason: str | None = None
     snippet: str = ""
+    # True when the product HAS a color axis but the shade could not be
+    # resolved (e.g. a discontinued shade no longer in the master's swatch
+    # list). Distinguishes "shade-bearing but unresolved" (fail closed to red,
+    # never label colorless) from a genuinely simple/colorless product.
+    shade_unresolved: bool = False
     fetched_at: datetime | None = None
     from_cache: bool = False
     via: str = "httpx"

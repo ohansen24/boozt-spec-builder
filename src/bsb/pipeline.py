@@ -494,7 +494,17 @@ def apply_resolution(
             f"ODM hint {row.shade!r} (likely a non-shade variant axis)",
         )
     if site_shade is None and lf_shade is None:
-        if not rejected_validator_shade:
+        if getattr(variant, "shade_unresolved", False):
+            # the product HAS a color axis but the shade is not on the current
+            # site (discontinued shade dropped from the master swatch list) —
+            # never label it colorless; fail closed for Felina / a retailer pass
+            record.color_name = FieldValue(
+                status="NOT_FOUND",
+                primary=nars_ref,
+                notes="shade-bearing variant but shade absent from current site "
+                "(likely discontinued) — not a no-color row",
+            )
+        elif not rejected_validator_shade:
             aliases = {str(a).casefold() for a in rules.get("no_color_aliases", [])}
             hint = (row.shade or "").strip()
             if hint and hint.casefold() not in aliases:

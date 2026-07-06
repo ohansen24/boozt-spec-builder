@@ -191,15 +191,46 @@ class SfccCatalogAdapter:
         return self.fetcher.get(url, referer=referer, ajax=ajax)
 
     @staticmethod
-    def _selected(product: dict, attr_id: str) -> str | None:
+    def _attr(product: dict, attr_id: str) -> dict | None:
         for attr in product.get("variationAttributes") or []:
-            if attr.get("id") != attr_id:
-                continue
-            for val in attr.get("values") or []:
-                if val.get("selected"):
-                    dv = str(val.get("displayValue") or "").strip()
-                    return dv or None
+            if attr.get("id") == attr_id:
+                return attr
         return None
+
+    @classmethod
+    def _selected(cls, product: dict, attr_id: str) -> str | None:
+        attr = cls._attr(product, attr_id)
+        if attr is None:
+            return None
+        for val in attr.get("values") or []:
+            if val.get("selected"):
+                dv = str(val.get("displayValue") or "").strip()
+                return dv or None
+        return None
+
+    @classmethod
+    def _shade(cls, product: dict, hex_hint: str | None) -> tuple[str | None, bool, bool]:
+        """Resolve the shade for a variant. Returns
+        (shade, has_color_axis, unresolved). ``Product-Variation?pid=variant``
+        usually pre-selects the color, but for some variants (notably
+        discontinued shades no longer in the master swatch list) nothing is
+        selected — then we try the variant's own image hex against the value
+        list. A color axis with no resolvable shade is `unresolved` (fail
+        closed downstream), never treated as colorless."""
+        attr = cls._attr(product, "color")
+        if attr is None:
+            return None, False, False  # simple/colorless product
+        selected = cls._selected(product, "color")
+        if selected:
+            return selected, True, False
+        if hex_hint:
+            want = hex_hint.upper()
+            for val in attr.get("values") or []:
+                if str(val.get("value") or "").upper() == want:
+                    dv = str(val.get("displayValue") or "").strip()
+                    if dv:
+                        return dv, True, False
+        return None, True, True  # color axis present but shade not recoverable
 
     def resolve_variant(self, entry: CatalogEntry) -> VariantResult:
         """Product-Variation keyed by the variant code returns that exact
@@ -237,7 +268,7 @@ class SfccCatalogAdapter:
             )
             return result
 
-        shade = self._selected(product, "color")
+        shade, _has_color_axis, unresolved = self._shade(product, entry.hex)
         size_text = self._selected(product, "size")
         product_name = str(product.get("productName") or entry.product_name or "").strip()
 
@@ -245,10 +276,17 @@ class SfccCatalogAdapter:
         result.product_name = product_name
         result.shade = shade
         result.size_text = size_text
-        result.snippet = (
-            f'"id":"{returned_id}" (upc {entry.upc} @ master PDP) '
-            f'… color {shade!r} size {size_text!r}'
-        )
+        result.shade_unresolved = unresolved
+        if unresolved:
+            result.snippet = (
+                f'"id":"{returned_id}" (upc {entry.upc}) — color axis present but shade not in '
+                f"current swatch list (hex {entry.hex}); likely a discontinued shade"
+            )
+        else:
+            result.snippet = (
+                f'"id":"{returned_id}" (upc {entry.upc} @ master PDP) '
+                f"… color {shade!r} size {size_text!r}"
+            )
 
         self.ean_cache.write(
             entry.gtin13,
