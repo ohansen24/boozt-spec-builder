@@ -559,7 +559,14 @@ def _generic_validator_pass(
         for h in anchored:
             families[h.family] = families.get(h.family, 0) + 1
         best_named = next((h for h in anchored if h.name), None)
-        best_inci = next((h for h in anchored if h.inci), None)
+        # prefer an EU/UK INCI source (Boozt requires EU-registered lists);
+        # fall back to any anchored INCI, tagged with its market so the pipeline
+        # can caveat/withhold-green a non-EU list
+        from bsb.resolve.market import is_eu_market
+
+        best_inci = next(
+            (h for h in anchored if h.inci and is_eu_market(h.market)), None
+        ) or next((h for h in anchored if h.inci), None)
         lf_shaped = None
         if best_named:
             lf_shaped = LfProduct(
@@ -568,7 +575,7 @@ def _generic_validator_pass(
                 size_text=best_named.size,
                 by_barcode={ean12: LfVariant(barcode=ean12, shade=best_named.color)},
             )
-        retailer_inci = (best_inci.inci, best_inci.url) if best_inci else None
+        retailer_inci = (best_inci.inci, best_inci.url, best_inci.market) if best_inci else None
         if lf_shaped or retailer_inci:
             generic_by_line[line] = (lf_shaped, retailer_inci)
         tick(

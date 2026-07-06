@@ -221,3 +221,4 @@ __marimo__/
 data/inbox/
 cache/
 data/out/
+.DS_Store

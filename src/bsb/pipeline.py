@@ -276,6 +276,7 @@ def apply_retailer_primary(record, row, hits, brand_cfg, rules) -> None:
 
     from bsb.categorize.rules import categorize, color_code_for
     from bsb.normalize.boozt import normalize_color_name, normalize_size, normalize_style_name
+    from bsb.resolve.market import is_eu_market
     from bsb.validate.matrix import clean_retail_name, compare_inci, shades_agree, similarity
 
     brand = str(brand_cfg.get("display_name", ""))
@@ -344,13 +345,25 @@ def apply_retailer_primary(record, row, hits, brand_cfg, rules) -> None:
             + " (retailer-primary)",
         )
 
-    # --- ingredients: retailer INCI (2 families base-list identical -> green)
+    # --- ingredients: EU-registered INCI required (Boozt guide). Prefer EU/UK
+    # retailer families; a non-EU list ships yellow with an allergen caveat and
+    # NEVER greens on non-EU agreement alone — the EU list may declare extra
+    # allergens the US/other market omits. GTIN still anchors identity; market
+    # only gates whether the list is regulatory-complete.
     inci_hits = [h for h in anchored if h.inci]
-    if inci_hits:
-        first = inci_hits[0]
+    eu_inci = [h for h in inci_hits if is_eu_market(h.market)]
+    if eu_inci:
+        first = eu_inci[0]
         inci_boozt = first.inci.replace(" · ", ", ").replace(" • ", ", ").strip(" ,")
+        # any independent family (EU or not) that agrees corroborates an
+        # EU-sourced value -> green; else single EU family -> yellow
         agree_fam = next(
-            (h for h in inci_hits[1:] if compare_inci(first.inci, h.inci)[0] == "identical"), None
+            (
+                h
+                for h in inci_hits
+                if h.family != first.family and compare_inci(first.inci, h.inci)[0] == "identical"
+            ),
+            None,
         )
         record.ingredients = FieldValue(
             value=inci_boozt,
@@ -358,11 +371,24 @@ def apply_retailer_primary(record, row, hits, brand_cfg, rules) -> None:
             primary=ref(first),
             secondary=ref(agree_fam) if agree_fam else None,
             notes=(
-                f"two retailer families agree ({first.family}, {agree_fam.family})"
+                f"two families agree, EU-sourced ({first.family}[{first.market}], "
+                f"{agree_fam.family}[{agree_fam.market}])"
                 if agree_fam
-                else f"single retailer family ({first.family})"
+                else f"single EU/UK retailer family ({first.family}[{first.market}])"
             )
             + " — retailer-primary",
+        )
+    elif inci_hits:
+        # only non-EU market sources: ship the list yellow with the caveat,
+        # never green (agreement among non-EU sources does not make it EU-reg)
+        first = inci_hits[0]
+        inci_boozt = first.inci.replace(" · ", ", ").replace(" • ", ", ").strip(" ,")
+        record.ingredients = FieldValue(
+            value=inci_boozt,
+            status="SINGLE_SOURCE",
+            primary=ref(first),
+            notes=f"non-EU market source ({first.family}[{first.market}]) — EU list may declare "
+            "additional allergens; retailer-primary",
         )
 
     # --- category/color_code/flammable from the resolved retailer name
@@ -387,6 +413,17 @@ def apply_retailer_primary(record, row, hits, brand_cfg, rules) -> None:
             )
 
 
+def _unpack_retailer_inci(retailer_inci):
+    """(text, url, market) from a retailer_inci tuple, tolerant of the legacy
+    2-tuple (text, url) — market defaults to None (treated as non-EU)."""
+    if not retailer_inci:
+        return None, None, None
+    if len(retailer_inci) == 3:
+        return retailer_inci
+    text, url = retailer_inci
+    return text, url, None
+
+
 def apply_resolution(
     record: ProductRecord,
     row: OdmRow,
@@ -395,7 +432,7 @@ def apply_resolution(
     rules: dict,
     lf_product=None,  # LfProduct | None (validator family: name/shade/size)
     weak_inci=None,  # WeakInci | None (INCIDecoder, notes only)
-    retailer_inci=None,  # (inci_text, source_url) | None from a GTIN-anchored retailer
+    retailer_inci=None,  # (inci_text, source_url, market) | None — GTIN-anchored retailer
 ) -> list[str]:
     """Enrich a Phase 0 record with resolved brand-site data and the
     validator matrix (kit 6.5). Returns anomaly strings (site size vs ODM
@@ -407,6 +444,7 @@ def apply_resolution(
         normalize_size,
         normalize_style_name,
     )
+    from bsb.resolve.market import is_eu_market
     from bsb.validate.guide import check_name_length
     from bsb.validate.matrix import (
         combine_exact,
@@ -613,8 +651,10 @@ def apply_resolution(
         )
         # a GTIN-anchored retailer INCI is an independent family: agreement on
         # the base list -> VERIFIED green; may-contain-only diff -> yellow;
-        # base-list diff -> CONFLICT (kit 6.5)
-        ret_text, ret_url = retailer_inci or (None, None)
+        # base-list diff -> CONFLICT (kit 6.5). The shipped value here is the
+        # BRAND's (authoritative, EU-registered), so a corroborating retailer of
+        # any market can confirm it to green — its market is only noted.
+        ret_text, ret_url, ret_market = _unpack_retailer_inci(retailer_inci)
         if ret_text:
             verdict, diff = compare_inci(master.inci_text, ret_text)
             ret_ref = SourceRef(
@@ -626,7 +666,9 @@ def apply_resolution(
                     status="VERIFIED",
                     primary=brand_inci_ref,
                     secondary=ret_ref,
-                    notes="; ".join([*notes, f"retailer INCI base-list identical ({ret_url})"]),
+                    notes="; ".join(
+                        [*notes, f"retailer INCI base-list identical ({ret_url})[{ret_market}]"]
+                    ),
                 )
             elif verdict == "may_contain_diff":
                 record.ingredients = FieldValue(
@@ -655,8 +697,9 @@ def apply_resolution(
             )
     elif retailer_inci and retailer_inci[0]:
         # brand site carries no INCI — a single GTIN-anchored retailer is the
-        # only source: ships yellow (kit 6.5 single family)
-        ret_text, ret_url = retailer_inci
+        # only source: ships yellow (kit 6.5 single family). If that source is
+        # non-EU, add the EU-allergen caveat (Boozt requires EU-registered INCI)
+        ret_text, ret_url, ret_market = _unpack_retailer_inci(retailer_inci)
         inci_boozt = (
             ret_text.replace(" · ", ", ")
             .replace(" • ", ", ")
@@ -664,13 +707,20 @@ def apply_resolution(
             .replace("•", ",")
             .strip(" ,")
         )
+        if is_eu_market(ret_market):
+            note = f"brand site has no INCI; single EU/UK retailer source ({ret_url})[{ret_market}]"
+        else:
+            note = (
+                f"brand site has no INCI; non-EU market source ({ret_url})[{ret_market}] — "
+                "EU list may declare additional allergens"
+            )
         record.ingredients = FieldValue(
             value=inci_boozt,
             status="SINGLE_SOURCE",
             primary=SourceRef(
                 url=ret_url, method="dom", fetched_at=datetime.now(UTC), snippet=ret_text[:160]
             ),
-            notes=f"brand site has no INCI; single GTIN-anchored retailer source ({ret_url})",
+            notes=note,
         )
     else:
         record.ingredients = FieldValue(

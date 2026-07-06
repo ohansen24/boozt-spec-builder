@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from bsb.extract.structured import page_asserts_gtin, parse_jsonld_products
 from bsb.fetch.firecrawl import FirecrawlClient
 from bsb.fetch.ladder import FetchError, PoliteFetcher
+from bsb.resolve.market import classify_market
 
 # hosts that never carry product-data value for us
 _JUNK_HOSTS = (
@@ -42,6 +43,7 @@ class ResolverHit(BaseModel):
     gtin_anchored: bool
     anchor_evidence: str | None = None
     language: str | None = None  # tld/lang-attr heuristic; en preferred for names
+    market: str | None = None  # EU | UK | US | OTHER — gates INCI (EU-reg required)
     name: str | None = None
     brand: str | None = None
     color: str | None = None
@@ -177,6 +179,7 @@ class GenericResolver:
                     gtin_anchored=evidence is not None,
                     anchor_evidence=evidence,
                     language=page_language(page.final_url, page.text),
+                    market=classify_market(page.final_url),
                     inci=inci_text,
                     inci_source=inci_source,
                     **fields,
