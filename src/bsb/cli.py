@@ -761,6 +761,14 @@ def _print_summary(s: RunSummary) -> None:
         for item in s.shade_pattern_flags[:15]:
             click.echo(f"  {item.ean} = {item.value!r}")
 
+    if s.caps_review_flags:
+        click.echo(
+            f"\n!! QA — {len(s.caps_review_flags)} name(s) with short-token casing to eyeball "
+            "(styling vs initialism, once per brand):"
+        )
+        for item in s.caps_review_flags[:15]:
+            click.echo(f"  {item.ean} {item.field} = {item.value!r} [{item.notes}]")
+
     if s.extraction_miss or s.no_source:
         em, ns = sum(s.extraction_miss.values()), sum(s.no_source.values())
         click.echo("\nRed cells by failure class:")

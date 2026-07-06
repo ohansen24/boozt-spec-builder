@@ -509,6 +509,7 @@ def apply_resolution(
     )
     from bsb.resolve.market import is_eu_market
     from bsb.validate.guide import check_name_length
+    from bsb.validate.language import caps_review_tokens
     from bsb.validate.matrix import (
         combine_exact,
         compare_inci,
@@ -661,6 +662,14 @@ def apply_resolution(
                 notes=f"brand-site shade authoritative; retailer differs ({lf_shade!r}) "
                 "— confirm-only, not a conflict",
             )
+
+    # caps-guard QA: if the SOURCE shade had a short all-caps token (title-cased,
+    # ambiguous styling vs initialism), mark for a human eyeball (once per brand)
+    caps = caps_review_tokens(variant.shade)
+    if caps and record.color_name.value:
+        record.color_name.notes = (
+            (record.color_name.notes or "") + f" [caps-review: {','.join(caps)}]"
+        )
 
     # --- size: exact match, then ODM tertiary check
     site_size, size_conversion_note = convert_us_size(variant.size_text)

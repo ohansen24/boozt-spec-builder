@@ -49,6 +49,25 @@ def leading_numeric_separator(text: str | None) -> bool:
     return bool(text) and bool(_LEADING_NUM_SEP.match(text))
 
 
+# short (<=3 char) uniformly-UPPER tokens in the SOURCE shade are ambiguous:
+# styling (title-case them) vs a genuine initialism ("XX"). The caps-guard
+# title-cases them; this flags the SOURCE occurrence so a human eyeballs the
+# call once per brand. Must run on the SOURCE — a normal short word ("My",
+# "Red") title-cased is indistinguishable in the output. Mixed-case ("PJs") is
+# deliberate identity and never flagged.
+_ALPHA_RUN = re.compile(r"[A-Za-zÀ-ÿ']+")
+
+
+def caps_review_tokens(source_text: str | None) -> list[str]:
+    if not source_text:
+        return []
+    return [
+        run
+        for run in _ALPHA_RUN.findall(source_text)
+        if len(run) <= 3 and run.isalpha() and run.isupper()
+    ]
+
+
 def has_non_latin(text: str | None) -> bool:
     return bool(text) and bool(_NON_LATIN.search(text))
 

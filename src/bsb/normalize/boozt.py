@@ -86,10 +86,22 @@ def _strip_shade_codes(text: str) -> str:
     return text
 
 
+def _title_token(run: str) -> str:
+    """Per alpha-run casing (Oli caps-guard): a token that is ALREADY mixed-case
+    carries deliberate identity casing ("PJs", "McBride") and is preserved
+    verbatim; a uniformly UPPER or lower token is site styling ("DOLCE", brow
+    "neutral") and gets title-cased."""
+    has_upper = any(c.isupper() for c in run)
+    has_lower = any(c.islower() for c in run)
+    if has_upper and has_lower:
+        return run  # deliberate mixed case — the casing IS the identity
+    return run.capitalize()
+
+
 def _brand_title_case(text: str) -> str:
-    """Title-case a site ALL-CAPS string, keeping digits/punctuation intact.
-    Only applied when the brand config asks for it."""
-    return re.sub(r"[A-Za-zÀ-ÿ']+", lambda m: m.group(0).capitalize(), text)
+    """Title-case site styling while preserving deliberate mixed-case tokens.
+    Applied only when the brand config asks for it."""
+    return re.sub(r"[A-Za-zÀ-ÿ']+", lambda m: _title_token(m.group(0)), text)
 
 
 _OZ = re.compile(r"(\d+(?:\.\d+)?)\s*(fl\.?\s*oz|oz)\b", re.IGNORECASE)

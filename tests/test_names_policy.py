@@ -117,3 +117,37 @@ def test_leading_numeric_separator_qa_flag():
     assert not leading_numeric_separator("3.5 Neutral Medium Brown")  # canonical -> clean
     assert not leading_numeric_separator("Golden Brick Red")
     assert not leading_numeric_separator("Clear")
+
+
+# ---- caps-guard: preserve deliberate mixed-case; title-case site styling ----
+
+def test_caps_guard_preserves_identity_casing():
+    from bsb.normalize.boozt import normalize_color_name
+    b = {"shade_format": {"drop_leading_number_separator": True, "title_case": True}}
+    assert normalize_color_name("22 Silk PJs (Rich Plum)", b) == "22 Silk PJs (Rich Plum)"
+    assert normalize_color_name("McBride Rose", b) == "McBride Rose"
+    # uniform UPPER / lower is site styling -> title-cased
+    nars = {"shade_format": {"strip_shade_codes": True, "title_case": True}}
+    assert normalize_color_name("DOLCE VITA", nars) == "Dolce Vita"
+    assert normalize_color_name("ORGASM - 777", nars) == "Orgasm"  # strip flow unchanged
+    # Laguna override path untouched (returns template, never title-cased)
+    over = {
+        "shade_format": {"strip_shade_codes": True, "title_case": True},
+        "shade_format_overrides": {
+            "laguna bronzing powder": {"number_template": "Laguna {number:02d}"}
+        },
+    }
+    got = normalize_color_name("LAGUNA 05", over, product_name="Laguna Bronzing Powder")
+    assert got == "Laguna 05"
+
+
+def test_caps_qa_flag_is_source_based():
+    from bsb.validate.language import caps_review_tokens
+    # short uniformly-UPPER SOURCE token -> flag (ambiguous styling/initialism)
+    assert caps_review_tokens("XX Volumising Mascara") == ["XX"]
+    # deliberate mixed-case is identity -> never flagged
+    assert caps_review_tokens("Silk PJs") == []
+    # normal short words (title/mixed in source) -> not flagged (avoids the
+    # 'My'/'Fan'/'Wax' false positives an output-based check produced)
+    assert caps_review_tokens("Precisely, My Brow Pencil") == []
+    assert caps_review_tokens("Neutral Medium Brown") == []

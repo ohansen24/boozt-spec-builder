@@ -138,6 +138,8 @@ class RunSummary(BaseModel):
     non_english_names: list[ReviewItem] = Field(default_factory=list)
     # QA: color_names still carrying a leading "N - " shade-code separator
     shade_pattern_flags: list[ReviewItem] = Field(default_factory=list)
+    # QA: short tokens whose casing may be a downcased initialism (eyeball once)
+    caps_review_flags: list[ReviewItem] = Field(default_factory=list)
     review_red: list[ReviewItem] = Field(default_factory=list)
     review_yellow: list[ReviewItem] = Field(default_factory=list)
     cleared_template_rows: int = 0
@@ -240,6 +242,7 @@ def write_output(
 
     non_english: list[ReviewItem] = []  # QA: shipped names that read non-English
     shade_flags: list[ReviewItem] = []  # QA: color_names with a leading N- separator
+    caps_flags: list[ReviewItem] = []  # QA: short-token casing to eyeball once/brand
     status_counter: Counter[str] = Counter()
     # Oli distinction: a red cell backed by an anchored source (has a primary
     # SourceRef) is an EXTRACTION MISS — we reached the product page but pulled
@@ -302,6 +305,19 @@ def write_output(
                             value=fv.value,
                             notes="leading number+separator — needs per-brand shade_format "
                             "(the number may be the shade identity; never auto-strip)",
+                        )
+                    )
+                # caps-review is source-based (marked into notes at normalize
+                # time); surface color_names whose SOURCE had a short all-caps
+                # token the caps-guard title-cased (styling vs initialism)
+                if field == "color_name" and "caps-review:" in (fv.notes or ""):
+                    caps_flags.append(
+                        ReviewItem(
+                            ean=record.ean12,
+                            field=field,
+                            status=fv.status,
+                            value=fv.value,
+                            notes=fv.notes,
                         )
                     )
                 rank = _STATUS_RANK.get(fv.status)
@@ -409,6 +425,12 @@ def write_output(
         report.append(["ean", "field", "value", "note"])
         for item in shade_flags:
             report.append([item.ean, item.field, _sanitize(item.value), item.notes])
+    if caps_flags:
+        report.append([])
+        report.append(["QA — short-token casing (styling vs initialism; eyeball once per brand)"])
+        report.append(["ean", "field", "value", "note"])
+        for item in caps_flags:
+            report.append([item.ean, item.field, _sanitize(item.value), item.notes])
     report.append([])
     report.append(["red cells by failure class", "cells"])
     report.append(
@@ -448,6 +470,7 @@ def write_output(
         no_source=dict(no_source),
         non_english_names=non_english,
         shade_pattern_flags=shade_flags,
+        caps_review_flags=caps_flags,
         review_red=review_red,
         review_yellow=review_yellow,
         cleared_template_rows=cleared,
