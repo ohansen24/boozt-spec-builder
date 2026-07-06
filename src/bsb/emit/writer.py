@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from bsb.ingest.template import TemplateMap, map_headers
 from bsb.models import FieldValue, ProductRecord
+from bsb.validate.language import non_english_tokens
 
 GREEN = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
 YELLOW = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
@@ -133,6 +134,8 @@ class RunSummary(BaseModel):
     # NOT_FOUND split by failure class (Oli distinction): field -> count
     extraction_miss: dict[str, int] = Field(default_factory=dict)
     no_source: dict[str, int] = Field(default_factory=dict)
+    # QA: shipped style_name/color_name values that read as non-English
+    non_english_names: list[ReviewItem] = Field(default_factory=list)
     review_red: list[ReviewItem] = Field(default_factory=list)
     review_yellow: list[ReviewItem] = Field(default_factory=list)
     cleared_template_rows: int = 0
@@ -233,6 +236,7 @@ def write_output(
 
     cleared = _clear_data_rows(ws, tmap)
 
+    non_english: list[ReviewItem] = []  # QA: shipped names that read non-English
     status_counter: Counter[str] = Counter()
     # Oli distinction: a red cell backed by an anchored source (has a primary
     # SourceRef) is an EXTRACTION MISS — we reached the product page but pulled
@@ -271,6 +275,21 @@ def write_output(
                 status_counter[fv.status] += 1
                 if fv.status == "NOT_FOUND":
                     (anchored_miss if fv.primary is not None else no_source)[field] += 1
+                # QA sweep: a shipped English-required name must read English —
+                # a human caught 2 non-English names once; the machine catches
+                # the next (Boozt requires English style_name/color_name)
+                if field in ("style_name", "color_name") and fv.value:
+                    toks = non_english_tokens(str(fv.value))
+                    if toks:
+                        non_english.append(
+                            ReviewItem(
+                                ean=record.ean12,
+                                field=field,
+                                status=fv.status,
+                                value=fv.value,
+                                notes=f"non-English tokens: {', '.join(toks)}",
+                            )
+                        )
                 rank = _STATUS_RANK.get(fv.status)
                 settled_manual = fv.status == "MANUAL" and (fv.value or _by_design_blank(fv))
                 if rank is not None and not settled_manual:
@@ -364,6 +383,12 @@ def write_output(
     report.append(["status", "cells"])
     for status, count in sorted(status_counter.items()):
         report.append([status, count])
+    if non_english:
+        report.append([])
+        report.append(["QA — non-English tokens in a name (Boozt requires English)"])
+        report.append(["ean", "field", "value", "tokens"])
+        for item in non_english:
+            report.append([item.ean, item.field, _sanitize(item.value), item.notes])
     report.append([])
     report.append(["red cells by failure class", "cells"])
     report.append(
@@ -401,6 +426,7 @@ def write_output(
         category_totals=dict(category_counter),
         extraction_miss=dict(anchored_miss),
         no_source=dict(no_source),
+        non_english_names=non_english,
         review_red=review_red,
         review_yellow=review_yellow,
         cleared_template_rows=cleared,

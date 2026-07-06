@@ -710,6 +710,11 @@ def _print_summary(s: RunSummary) -> None:
     for category, count in sorted(s.category_totals.items(), key=lambda kv: -kv[1]):
         click.echo(f"  {category:20} {count}")
 
+    if s.non_english_names:
+        click.echo(f"\n!! QA — {len(s.non_english_names)} name(s) read as non-English:")
+        for item in s.non_english_names[:15]:
+            click.echo(f"  {item.ean} {item.field} = {item.value!r} [{item.notes}]")
+
     if s.extraction_miss or s.no_source:
         em, ns = sum(s.extraction_miss.values()), sum(s.no_source.values())
         click.echo("\nRed cells by failure class:")

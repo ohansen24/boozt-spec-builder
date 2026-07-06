@@ -16,6 +16,7 @@ Statuses follow the anti-hallucination charter with no network available:
   (open question 1).
 """
 
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -266,6 +267,33 @@ def build_records(
     ]
 
 
+# Cyrillic size units (ml/g) are matched deliberately; RUF001 ambiguity is ok
+_TITLE_SIZE = re.compile(
+    r"(\d+(?:[.,]\d+)?)\s*(ml|ml\.|cl|l|g|gr|kg|oz|мл|мл\.|г|гр|мілілітрів|мілілітри)\b",  # noqa: RUF001
+    re.IGNORECASE,
+)
+_UNIT_NORMALIZE = {
+    "мл": "ml", "мл.": "ml", "мілілітрів": "ml", "мілілітри": "ml",
+    "г": "g", "гр": "g", "gr": "g", "ml.": "ml",  # noqa: RUF001
+}
+
+
+def _size_from_title(name: str | None):
+    """Parse a size embedded in a retailer title ("Cool Cream, 300 ml", "1000
+    ml" in localized units), normalizing localized units to ml/g before the
+    shared size normalizer. Returns the normalized size or None."""
+    from bsb.normalize.boozt import normalize_size
+
+    if not name:
+        return None
+    match = _TITLE_SIZE.search(name)
+    if not match:
+        return None
+    number, unit = match.group(1), match.group(2).lower()
+    unit = _UNIT_NORMALIZE.get(unit, unit)
+    return normalize_size(f"{number} {unit}")
+
+
 def apply_retailer_primary(record, row, hits, brand_cfg, rules) -> None:
     """Fill a record with NO brand-site master from GTIN-anchored retailer
     hits (generic resolver). Retailer-primary policy: a field is GREEN only
@@ -277,6 +305,7 @@ def apply_retailer_primary(record, row, hits, brand_cfg, rules) -> None:
     from bsb.categorize.rules import categorize, color_code_for
     from bsb.normalize.boozt import normalize_color_name, normalize_size, normalize_style_name
     from bsb.resolve.market import is_eu_market
+    from bsb.validate.language import is_english_name
     from bsb.validate.matrix import clean_retail_name, compare_inci, shades_agree, similarity
 
     brand = str(brand_cfg.get("display_name", ""))
@@ -291,8 +320,11 @@ def apply_retailer_primary(record, row, hits, brand_cfg, rules) -> None:
             getattr(record, f).notes = "no GTIN-anchored retailer family found (retailer-primary)"
         return
 
-    # --- style_name: two families whose cleaned names match -> green
-    named = [(h, clean_retail_name(h.name or "", brand)) for h in anchored if h.name]
+    # --- style_name: English required (Boozt). Prefer English-source families;
+    # a non-English name is NEVER shipped (never translated) — if that is all
+    # that exists, fail closed with a note. Two English families agree -> green.
+    named_all = [(h, clean_retail_name(h.name or "", brand)) for h in anchored if h.name]
+    named = [(h, c) for h, c in named_all if is_english_name(h.name, h.language)]
     if named:
         base = named[0]
         agree = [
@@ -316,9 +348,20 @@ def apply_retailer_primary(record, row, hits, brand_cfg, rules) -> None:
                 primary=ref(base[0]),
                 notes=f"single retailer family ({base[0].family}); retailer-primary",
             )
+    elif named_all:
+        # only non-English names exist -> fail closed, never ship/translate
+        h0 = named_all[0][0]
+        record.style_name = FieldValue(
+            status="NOT_FOUND",
+            primary=ref(h0),
+            notes=f"only non-English sources found ({h0.language or '?'}, {h0.url})",
+        )
 
-    # --- size: normalized agreement across families
+    # --- size: normalized agreement across families; harvest from the retail
+    # title when no explicit size field (titles embed "750 ml", "1000 мл")
     sizes = [(h, normalize_size(h.size)) for h in anchored if normalize_size(h.size)]
+    if not sizes:
+        sizes = [(h, s) for h in anchored if (s := _size_from_title(h.name))]
     if sizes:
         first = sizes[0]
         agree = [h for h, s in sizes if s == first[1]]
@@ -331,8 +374,9 @@ def apply_retailer_primary(record, row, hits, brand_cfg, rules) -> None:
             + " (retailer-primary)",
         )
 
-    # --- color_name: retailer shade if present (2 agree -> green); else leave
-    shaded = [(h, normalize_color_name(h.color, brand_cfg)) for h in anchored if h.color]
+    # --- color_name: English required, same policy as style_name
+    shaded_all = [(h, normalize_color_name(h.color, brand_cfg)) for h in anchored if h.color]
+    shaded = [(h, c) for h, c in shaded_all if is_english_name(h.color, h.language)]
     if shaded:
         first = shaded[0]
         agree = [h for h, c in shaded if shades_agree(c or "", first[1] or "")]
@@ -343,6 +387,13 @@ def apply_retailer_primary(record, row, hits, brand_cfg, rules) -> None:
             secondary=ref(agree[1]) if len(agree) >= 2 else None,
             notes=("two retailer families agree" if len(agree) >= 2 else "single retailer family")
             + " (retailer-primary)",
+        )
+    elif shaded_all:
+        h0 = shaded_all[0][0]
+        record.color_name = FieldValue(
+            status="NOT_FOUND",
+            primary=ref(h0),
+            notes=f"only non-English shade sources found ({h0.language or '?'}, {h0.url})",
         )
 
     # --- ingredients: EU-registered INCI required (Boozt guide). Prefer EU/UK
@@ -582,6 +633,22 @@ def apply_resolution(
         record.color_name = combine_exact(
             "shade", site_shade, nars_ref, lf_shade, lf_ref, agree=shades_agree
         )
+        # brands whose own site shades are authoritative and complete (Benefit's
+        # numbered shades vs retailers' abbreviated titles): a retailer shade
+        # CONFIRMS (agree -> green) but never CONFLICTS — keep the brand shade,
+        # note the difference, so format mismatches don't fail the run.
+        if (
+            record.color_name.status == "CONFLICT"
+            and brand_cfg.get("retailer_shade_confirms_only")
+            and site_shade
+        ):
+            record.color_name = FieldValue(
+                value=site_shade,
+                status="SINGLE_SOURCE",
+                primary=nars_ref,
+                notes=f"brand-site shade authoritative; retailer differs ({lf_shade!r}) "
+                "— confirm-only, not a conflict",
+            )
 
     # --- size: exact match, then ODM tertiary check
     site_size, size_conversion_note = convert_us_size(variant.size_text)

@@ -252,6 +252,11 @@ benefit:
   brand_family_controllers:
     - market: DE
       controller_base: https://www.benefitcosmetics.com/on/demandware.store/Sites-benco-de-Site/de_DE/
+  # Benefit's own numbered shades ("2-Best Life (Fair Warm)") are authoritative
+  # and complete; retailers list abbreviated titles ("Best Life"). Let a
+  # retailer shade CONFIRM (agree -> green) but never CONFLICT the brand shade,
+  # so format mismatches don't trip the validator conflict-rate stop.
+  retailer_shade_confirms_only: true
   # Benefit shade names are proprietary marketing names ("1-Amaze 'Em (Fair
   # Neutral)") with no Boozt color-code mapping -> color_code fails closed to
   # Felina. No shade_lexicon by design.
