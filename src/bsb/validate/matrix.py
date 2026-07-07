@@ -125,13 +125,17 @@ def combine_exact(
 
 def clean_retail_name(name: str, brand: str, known_shades: list[str] | None = None) -> str:
     """Strip retailer decoration (brand word, size, parentheticals, trailing
-    shade) so name similarity compares substance, not styling."""
+    shade) so a retailer product title becomes the bare product name — used both
+    to compare name substance and, on the retailer-primary path, as the shipped
+    style_name. Edge separators left behind after removing a brand prefix or
+    trailing size ("Maria Nila - Shaping Heat Spray - 250 ml" -> "Shaping Heat
+    Spray") are trimmed; an internal dash in the real name is kept."""
     cleaned = _PARENS.sub(" ", name)
     cleaned = _SIZE_TOKEN.sub(" ", cleaned)
     cleaned = re.sub(re.escape(brand), " ", cleaned, flags=re.IGNORECASE)
     for shade in known_shades or []:
         cleaned = re.sub(rf"\b{re.escape(shade)}\s*$", " ", cleaned, flags=re.IGNORECASE)
-    return " ".join(cleaned.split())
+    return " ".join(cleaned.split()).strip(" -–—·,|/")  # noqa: RUF001 (en/em dash separators)
 
 
 def confirm_name(

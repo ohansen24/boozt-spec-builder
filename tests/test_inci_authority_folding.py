@@ -226,6 +226,21 @@ def test_distinct_colorants_with_ci_parens_not_merged():
                         "Butyrospermum Parkii Butter, Aqua")[0] == "identical"
 
 
+def test_retailer_primary_name_strips_brand_and_size():
+    # a retailer title "Brand - Product - 250 ml" must ship as the bare product
+    # name, not carry the brand prefix or size (which has its own field)
+    from bsb.validate.matrix import clean_retail_name
+    assert clean_retail_name("Maria Nila - Shaping Heat Spray - 250 ml", "Maria Nila") \
+        == "Shaping Heat Spray"
+    assert clean_retail_name("Purifying Cleanse Shampoo 1000ml", "Maria Nila") \
+        == "Purifying Cleanse Shampoo"
+    assert clean_retail_name("Maria Nila Purifying Cleanse Shampoo, 350 ml", "Maria Nila") \
+        == "Purifying Cleanse Shampoo"
+    # an internal dash that is part of the real name is preserved
+    assert clean_retail_name("Maria Nila True Soft - Argan Oil 100 ml", "Maria Nila") \
+        == "True Soft - Argan Oil"
+
+
 def test_equal_authority_retailer_disagreement_fails_closed():
     # no brand list; two EU retailer families genuinely disagree -> red (R1/R5),
     # not a silent first-wins single-source

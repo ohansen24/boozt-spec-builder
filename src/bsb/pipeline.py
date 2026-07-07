@@ -437,7 +437,10 @@ def apply_retailer_primary(record, row, hits, brand_cfg, rules) -> None:
             for h, c in named
             if similarity(base[1], c) >= 0.6 or base[1].casefold() in c.casefold()
         ]
-        value = normalize_style_name(base[0].name, brand_cfg)
+        # ship the CLEANED name (brand + size stripped), not the raw retailer
+        # title — else style_name carries "… - 250 ml"/brand prefix. Fall back to
+        # the raw name only if cleaning emptied it (title was brand+size only).
+        value = normalize_style_name(base[1] or base[0].name, brand_cfg)
         if len(agree) >= 2:
             record.style_name = FieldValue(
                 value=value,
