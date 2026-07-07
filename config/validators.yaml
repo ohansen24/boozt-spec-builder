@@ -41,22 +41,23 @@ discovered_pools:
   - cosmeterie
   - hermosabeauty
   - bellaffair
+  - rozetka
   - salonservicespro
+  - refayiti
+  - prozdravevlasy
   - jomashop
   - bluemercury
-  - rozetka
   - premierbeautysupply
-  - refayiti
-  - salontotal
-  - haarshop
-  - prozdravevlasy
-  - nalda
   - allegro
-  - lyskin
-  - autumnnucci
-  - 50-ml
   - proshop
+  - haarshop
+  - autumnnucci
+  - salontotal
+  - nalda
+  - lyskin
+  - 50-ml
   - harveynichols
+  - lojaglamourosa
   - beautyplussalon
   - krasotika
   - perfumesclub
@@ -66,8 +67,34 @@ discovered_pools:
   - skinbeautifulrx
   - latiendadecosmeticos
   - prices
-  - lojaglamourosa
   - world
   - digit-eyes
   - media
   - jadero
+  - heureka
+  - beautyplaza
+  - hairsquare
+  - fresh-store
+
+# INCI source capability (Oli 2026-07). GTIN-anchoring identifies the product on
+# any market, but a family's INCI may still be unusable. This drives the
+# generic resolver's INCI trust; families here remain valid name/shade/size
+# anchors regardless.
+#   blocklist    — never take INCI from these: masked/redacted, alphabetized
+#                  (wrong order), or page furniture (concentration tables,
+#                  marketing copy, disclaimers) scraped as a "list".
+#   content_only — alphabetized A–Z: no usable concentration order, but the
+#                  ingredient CONTENT is sound. The order-neutral comparator
+#                  already treats these as content-corroboration only (the
+#                  shipped order is always the brand's), so this list is an
+#                  audit trail rather than an enforcement gate.
+inci_capability:
+  blocklist:
+    - incibeauty        # redacts ingredients (*******) + alphabetized
+    - incidecoder       # alphabetized, not concentration order
+    - world             # concentration-table dump leaked as an ingredient list
+    - bluemercury       # marketing copy leaked into the list
+    - salontotal        # supplier disclaimer leaked into the list
+  content_only:
+    - bellaffair        # alphabetized A–Z (DE)
+    - salonservicespro  # alphabetized A–Z (US)

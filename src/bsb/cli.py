@@ -462,6 +462,7 @@ def _run_resolved(
                 brand_key,
                 rules,
                 fetcher,
+                config_dir,
                 run_meta,
                 progress=lambda m: click.echo("  " + m),
             )
@@ -545,6 +546,7 @@ def _retailer_primary_pass(
 ):
     """Closing pass for EANs with NO brand-site master: generic resolver
     (search -> GTIN-anchored retailer PDPs) fills them retailer-primary."""
+    from bsb.config import load_inci_blocklist
     from bsb.fetch.firecrawl import FirecrawlClient
     from bsb.pipeline import apply_retailer_primary
     from bsb.resolve.generic import GenericResolver
@@ -553,7 +555,7 @@ def _retailer_primary_pass(
     if not firecrawl.available:
         progress("retailer-fallback unavailable (no FIRECRAWL_API_KEY) — skipping")
         return
-    resolver = GenericResolver(fetcher, firecrawl)
+    resolver = GenericResolver(fetcher, firecrawl, load_inci_blocklist(config_dir))
     brand = str(brand_cfg.get("search_brand") or brand_cfg.get("display_name") or brand_key)
 
     unresolved = [
@@ -585,7 +587,8 @@ def _retailer_primary_pass(
 
 
 def _field_completion_pass(
-    records, by_ean_row, resolution, brand_cfg, brand_key, rules, fetcher, run_meta, progress
+    records, by_ean_row, resolution, brand_cfg, brand_key, rules, fetcher, config_dir,
+    run_meta, progress
 ):
     """Lever 2 (Oli coverage): a RESOLVED row can still be missing INCI or size
     that other sites plainly have — the brand resolved name/shade but carries no
@@ -594,6 +597,7 @@ def _field_completion_pass(
     two-families -> green). Deduped per master (INCI is a product-level datum);
     size is per-variant so it fills only the resolved rep. Never overwrites a
     filled cell; credit-metered; cache-first."""
+    from bsb.config import load_inci_blocklist
     from bsb.fetch.firecrawl import FirecrawlClient
     from bsb.pipeline import build_retailer_inci_field, build_retailer_size_field
     from bsb.resolve.generic import GenericResolver
@@ -602,7 +606,7 @@ def _field_completion_pass(
     if not firecrawl.available:
         progress("field-completion unavailable (no FIRECRAWL_API_KEY) — skipping")
         return
-    resolver = GenericResolver(fetcher, firecrawl)
+    resolver = GenericResolver(fetcher, firecrawl, load_inci_blocklist(config_dir))
     brand = str(brand_cfg.get("search_brand") or brand_cfg.get("display_name") or brand_key)
 
     # group resolved rows still missing INCI/size by master (INCI shared per line)
@@ -667,6 +671,7 @@ def _generic_validator_pass(
     Per distinct product line: search -> GTIN-anchored retailer PDP -> a
     validator family (name/shade/size, as an LfProduct) + retailer INCI.
     Records working families into validators.yaml; reports Firecrawl credits."""
+    from bsb.config import load_inci_blocklist
     from bsb.fetch.firecrawl import FirecrawlClient
     from bsb.resolve.generic import GenericResolver
     from bsb.resolve.validators import LfProduct, LfVariant
@@ -675,7 +680,7 @@ def _generic_validator_pass(
     if not firecrawl.available:
         progress("generic validator unavailable (no FIRECRAWL_API_KEY) — skipping")
         return {}
-    resolver = GenericResolver(fetcher, firecrawl)
+    resolver = GenericResolver(fetcher, firecrawl, load_inci_blocklist(config_dir))
     brand = str(brand_cfg.get("search_brand") or brand_cfg.get("display_name") or brand_key)
 
     # one representative EAN per product line (INCI/name shared across sizes)
@@ -1013,6 +1018,7 @@ def golden_cmd(brand_key: str, limit: int | None, config_dir: Path, cache_dir: P
         synonyms,
         cache_dir,
         limit=limit,
+        config_dir=config_dir,
     )
     click.echo(f"GOLDEN {brand_key}: {result.resolved}/{result.rows} rows resolved")
     for note in result.notes:

@@ -56,6 +56,19 @@ def load_header_synonyms(config_dir: Path = DEFAULT_CONFIG_DIR) -> dict[str, lis
     return load_yaml(config_dir / "header_synonyms.yaml")
 
 
+def load_inci_blocklist(config_dir: Path = DEFAULT_CONFIG_DIR) -> frozenset[str]:
+    """Retailer families whose INCI is never trusted (validators.yaml
+    inci_capability.blocklist): masked, alphabetized-only or page-furniture
+    scrapes. Empty set if the file or key is absent — the resolver still
+    applies its built-in default."""
+    path = config_dir / "validators.yaml"
+    if not path.exists():
+        return frozenset()
+    data = load_yaml(path) or {}
+    blocklist = (data.get("inci_capability") or {}).get("blocklist") or []
+    return frozenset(str(f).strip().lower() for f in blocklist)
+
+
 def load_order_overrides(order_number: str, config_dir: Path = DEFAULT_CONFIG_DIR) -> list[dict]:
     """Per-order manual decisions from config/order_overrides/{order}.yaml
     (empty list when the file does not exist)."""

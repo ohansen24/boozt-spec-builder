@@ -31,6 +31,7 @@ from urllib.parse import quote
 from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field
 
+from bsb.extract.inci import strip_inci_trailer
 from bsb.extract.structured import (
     jsonld_selected_shade,
     parse_jsonld_products,
@@ -174,6 +175,7 @@ def extract_inci(html: str) -> str | None:
                 best, best_dots = segment, dots
         if best is not None and best_dots >= _MIN_INCI_DOTS:
             best = _INCI_LABEL.sub("", best)
+            best = strip_inci_trailer(best)  # cut appended legal/disclaimer copy
             return best.strip(" ·•") or None
         return None
     return None

@@ -179,19 +179,82 @@ def confirm_name(
     )
 
 
-_WATER_WORDS = {"water", "aqua", "eau", "purified water"}
+# --- compare-time INCI folding (kit: NEVER rewrite the stored value) ---------
+# Boozt requires the brand's descending-weight ordering and EU nomenclature;
+# retailers reorder, alphabetize, localize and abbreviate. These tables let the
+# comparator recognise the SAME ingredient across those benign variants so a
+# formatting difference is not mistaken for a formulation conflict. Versioned:
+# bump when the table changes. Observed live (Maria Nila 2026-07): German
+# localisations, spelling variants, generic/specific fragrance naming.
+# Per-family capability (which retailers alphabetize / carry unusable INCI) is
+# documented in config/validators.yaml (inci_capability).
+INCI_SYNONYM_VERSION = 1
+
+# slash-joined multi-language names that denote ONE ingredient
+_SLASH_SYNONYM_GROUPS = {
+    "aqua": {"water", "aqua", "eau", "purified water"},
+    "parfum": {"parfum", "fragrance"},
+}
+# whole-token synonyms (retailer spelling/localisation -> EU canonical)
+_TOKEN_SYNONYMS = {
+    "propandiol": "propanediol",
+    "butan": "butane",
+    "isobutan": "isobutane",
+    "cetrimoniumchlorid": "cetrimonium chloride",
+    "tocopherylacetat": "tocopheryl acetate",
+    "polyvinylpyrrolidon": "pvp",
+    "propylenglykol": "propylene glycol",
+}
+# word-boundary folds applied within multi-word tokens
+_WORD_FOLDS = {
+    "annus": "annuus",          # "helianthus annus" -> annuus (retailer typo)
+    "hydrolized": "hydrolyzed",  # US/retailer spelling
+}
+_MATCH_STRIP = re.compile(r"[\s\-]")
 
 
-def _water_canon(token: str) -> str:
-    """Compare-time ONLY (kit: never rewrite the stored value): multi-language
-    water naming is one ingredient — Water == Aqua == Eau == Water/Aqua/Eau ==
-    "Aqua (Purified Water)"."""
+def _slash_canon(token: str) -> str:
+    """Compare-time ONLY: a slash-joined name whose parts are all one synonym
+    group collapses to that group's canonical token — Water == Aqua == Eau ==
+    Water/Aqua/Eau == "Aqua (Purified Water)"; Parfum == Fragrance ==
+    Parfum/Fragrance."""
     # token edge-cleaning may have eaten a closing paren — match it optional
     base = re.sub(r"\([^)]*\)?", "", token).strip()
     parts = [p.strip() for p in base.split("/") if p.strip()]
-    if parts and all(p in _WATER_WORDS for p in parts):
-        return "aqua"
+    if not parts:
+        return token
+    for canon, members in _SLASH_SYNONYM_GROUPS.items():
+        if all(p in members for p in parts):
+            return canon
     return token
+
+
+def _match_key(token: str) -> str:
+    """Order/space/hyphen/localisation-insensitive equality key for a token
+    (compare-time ONLY). Folds known synonyms then strips spacing and hyphens
+    so "Cetearyl Alcohol"=="Cetearylalcohol", "Alpha-Isomethyl Ionone"==
+    "Alphaisomethyl Ionone", "Quaternium-95"=="Quaternium95". Distinct
+    ingredients stay distinct (Glycerin != Glycerine — not in the table)."""
+    t = _TOKEN_SYNONYMS.get(token, token)
+    for word, repl in _WORD_FOLDS.items():
+        t = re.sub(rf"\b{word}\b", repl, t)
+    # drop DIGIT-FREE clarifying parentheticals ("(Shea)", "(Potato)",
+    # "(Sunflower)") so an omitted common name folds — but KEEP parentheticals
+    # carrying a numeric identity ("(CI 77491)"), else two distinct colorants
+    # written "Iron Oxides (CI 77491)" / "(CI 77499)" would collapse to one key.
+    t = re.sub(r"\((?![^)]*\d)[^)]*\)", "", t)
+    return _MATCH_STRIP.sub("", t)
+
+
+def is_alphabetized(text: str) -> bool:
+    """True when a candidate's base list is sorted A-Z: it carries no usable
+    concentration ordering, so it can corroborate CONTENT but never supply
+    order (which only the brand publishes). Floor of 8 tokens: a short real
+    formula can open Aqua < … < Parfum by coincidence, but a full ingredient
+    list being A-Z end-to-end by chance (rather than by an alphabetizing
+    retailer) is astronomically unlikely."""
+    base, _ = split_inci(text)
+    return len(base) >= 8 and base == sorted(base)
 
 
 def split_inci(text: str) -> tuple[list[str], list[str]]:
@@ -218,18 +281,32 @@ def split_inci(text: str) -> tuple[list[str], list[str]]:
             cleaned = " ".join(token.split()).replace(" / ", "/").replace("/ ", "/")
             cleaned = cleaned.replace(" /", "/").strip(" .[]():+/-·").casefold()
             if cleaned:
-                out.append(_water_canon(cleaned))
+                out.append(_slash_canon(cleaned))
         return out
 
     return tokens(base_part), tokens(may_part)
 
 
 def compare_inci(a: str, b: str) -> tuple[str, str]:
-    """("identical" | "may_contain_diff" | "base_diff", rendered diff)."""
+    """("identical" | "may_contain_diff" | "base_diff", rendered diff).
+
+    CONTENT comparison, order-neutral (kit 6.5 + Oli 2026-07): ingredient
+    identity is compared as a set of fold-normalised match keys, so a retailer
+    that reorders, alphabetizes or localises the SAME formula reads as
+    identical — a difference in ORDER is never a conflict, because Boozt ships
+    the brand's descending-weight ordering regardless. A real ingredient
+    difference (a token present on one side only, after folding) still surfaces
+    as base_diff / may_contain_diff with a rendered diff, so genuine
+    formulation differences are never silently swallowed."""
     base_a, may_a = split_inci(a)
     base_b, may_b = split_inci(b)
 
-    def render(missing: list[str], extra: list[str]) -> str:
+    def keys(tokens: list[str]) -> set[str]:
+        return {_match_key(t) for t in tokens}
+
+    def render(src_a: list[str], keys_b: set[str], src_b: list[str], keys_a: set[str]) -> str:
+        missing = [t for t in src_a if _match_key(t) not in keys_b]
+        extra = [t for t in src_b if _match_key(t) not in keys_a]
         parts = []
         if missing:
             parts.append("missing: " + ", ".join(missing[:6]))
@@ -237,16 +314,12 @@ def compare_inci(a: str, b: str) -> tuple[str, str]:
             parts.append("extra: " + ", ".join(extra[:6]))
         return " | ".join(parts)
 
-    if base_a != base_b:
-        missing = [t for t in base_a if t not in base_b]
-        extra = [t for t in base_b if t not in base_a]
-        if missing or extra:
-            return "base_diff", render(missing, extra)
-        return "base_diff", "same tokens, different order"
-    if may_a != may_b:
-        missing = [t for t in may_a if t not in may_b]
-        extra = [t for t in may_b if t not in may_a]
-        return "may_contain_diff", render(missing, extra)
+    ka, kb = keys(base_a), keys(base_b)
+    if ka != kb:
+        return "base_diff", render(base_a, kb, base_b, ka)
+    kma, kmb = keys(may_a), keys(may_b)
+    if kma != kmb:
+        return "may_contain_diff", render(may_a, kmb, may_b, kma)
     return "identical", ""
 
 

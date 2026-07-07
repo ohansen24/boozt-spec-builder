@@ -307,13 +307,16 @@ def _size_from_title(name: str | None):
 
 
 def build_retailer_inci_field(anchored, ref):
-    """INCI FieldValue from GTIN-anchored retailer hits under the EU-registered
-    gate: EU/UK families preferred; two independent families agreeing -> green;
-    a single EU/UK family -> yellow; only non-EU sources -> yellow with the
-    allergen caveat (never green). None when no hit carries INCI. Shared by the
-    retailer-primary pass and the field-completion pass so the reliability rule
-    lives in one place."""
-    from bsb.resolve.market import is_eu_market
+    """INCI FieldValue from GTIN-anchored retailer hits — the NO-BRAND path
+    (there is no brand list to defer to). Under the EU-registered gate:
+    EU/UK families preferred; two families agreeing on content -> green; a
+    single family -> yellow; only non-EU sources -> yellow with the allergen
+    caveat (never green). NEW (Oli R1/R5): two EQUAL-authority families that
+    genuinely disagree on the base list, with no higher (brand) source to break
+    the tie, fail closed to red rather than silently shipping the first and
+    dropping the second. None when no hit carries INCI. Shared by the
+    retailer-primary and field-completion passes so the rule lives in one place."""
+    from bsb.resolve.market import inci_authority, is_eu_market
     from bsb.validate.matrix import compare_inci
 
     inci_hits = [h for h in anchored if h.inci]
@@ -323,37 +326,54 @@ def build_retailer_inci_field(anchored, ref):
     def _boozt(t):
         return t.replace(" · ", ", ").replace(" • ", ", ").strip(" ,")
 
-    eu = [h for h in inci_hits if is_eu_market(h.market)]
-    if eu:
-        first = eu[0]
-        agree = next(
-            (
-                h
-                for h in inci_hits
-                if h.family != first.family and compare_inci(first.inci, h.inci)[0] == "identical"
-            ),
-            None,
-        )
+    # highest INCI authority first (EU/UK retailer 3 > non-EU 2); no brand here
+    inci_hits = sorted(inci_hits, key=lambda h: -inci_authority(h.market))
+    first = inci_hits[0]
+    others = [h for h in inci_hits if h.family != first.family]
+    agree = next(
+        (h for h in others if compare_inci(first.inci, h.inci)[0] == "identical"), None
+    )
+    if agree and is_eu_market(first.market):
         return FieldValue(
             value=_boozt(first.inci),
-            status="VERIFIED" if agree else "SINGLE_SOURCE",
+            status="VERIFIED",
             primary=ref(first),
-            secondary=ref(agree) if agree else None,
-            notes=(
-                f"two families agree, EU-sourced ({first.family}[{first.market}], "
-                f"{agree.family}[{agree.market}])"
-                if agree
-                else f"single EU/UK retailer family ({first.family}[{first.market}])"
-            )
-            + " — retailer",
+            secondary=ref(agree),
+            notes=f"two families agree, EU-sourced ({first.family}[{first.market}], "
+            f"{agree.family}[{agree.market}]) — retailer",
         )
-    first = inci_hits[0]
+    # equal-authority disagreement, no brand list to defer to -> fail closed (red)
+    conflict = next(
+        (
+            h
+            for h in others
+            if inci_authority(h.market) == inci_authority(first.market)
+            and compare_inci(first.inci, h.inci)[0] == "base_diff"
+        ),
+        None,
+    )
+    if conflict is not None:
+        _, diff = compare_inci(first.inci, conflict.inci)
+        return FieldValue(
+            value=None,
+            status="CONFLICT",
+            primary=ref(first),
+            secondary=ref(conflict),
+            notes=f"equal-authority retailer families disagree on base list [{diff}] "
+            f"({first.family}[{first.market}] vs {conflict.family}[{conflict.market}]) — "
+            "no brand list to defer to; fail closed — retailer",
+        )
+    note = (
+        f"single EU/UK retailer family ({first.family}[{first.market}])"
+        if is_eu_market(first.market)
+        else f"non-EU market source ({first.family}[{first.market}]) — EU list may "
+        "declare additional allergens"
+    )
     return FieldValue(
         value=_boozt(first.inci),
         status="SINGLE_SOURCE",
         primary=ref(first),
-        notes=f"non-EU market source ({first.family}[{first.market}]) — EU list may declare "
-        "additional allergens; retailer",
+        notes=note + "; retailer",
     )
 
 
@@ -534,6 +554,7 @@ def apply_resolution(
         combine_exact,
         compare_inci,
         confirm_name,
+        is_alphabetized,
         odm_name_check,
         shades_agree,
         similarity,
@@ -795,6 +816,18 @@ def apply_resolution(
             ret_ref = SourceRef(
                 url=ret_url, method="dom", fetched_at=datetime.now(UTC), snippet=ret_text[:160]
             )
+            # a lower-authority retailer may CONFIRM the brand list (-> green) or
+            # ANNOTATE it (note), but NEVER delete or demote it: the shipped
+            # value is always the brand's authoritative, EU-registered,
+            # descending-weight list. A base-list difference is a visible yellow
+            # annotation (real formulation differences must still surface — Oli
+            # R5), not a red deletion (which inverted brand > retailer).
+            alpha = (
+                " — retailer base list is A-Z ordered (content corroboration "
+                "only; shipped order is the brand's)"
+                if is_alphabetized(ret_text)
+                else ""
+            )
             if verdict == "identical":
                 record.ingredients = FieldValue(
                     value=inci_boozt,
@@ -802,7 +835,10 @@ def apply_resolution(
                     primary=brand_inci_ref,
                     secondary=ret_ref,
                     notes="; ".join(
-                        [*notes, f"retailer INCI base-list identical ({ret_url})[{ret_market}]"]
+                        [
+                            *notes,
+                            f"retailer INCI content-identical ({ret_url})[{ret_market}]{alpha}",
+                        ]
                     ),
                 )
             elif verdict == "may_contain_diff":
@@ -811,16 +847,23 @@ def apply_resolution(
                     status="SINGLE_SOURCE",
                     primary=brand_inci_ref,
                     secondary=ret_ref,
-                    notes="; ".join([*notes, f"retailer may-contain differs [{diff}] ({ret_url})"]),
+                    notes="; ".join(
+                        [*notes, f"retailer may-contain differs [{diff}] ({ret_url}){alpha}"]
+                    ),
                 )
-            else:
+            else:  # base_diff — genuine ingredient difference: annotate, keep brand
                 record.ingredients = FieldValue(
-                    value=None,
-                    status="CONFLICT",
+                    value=inci_boozt,
+                    status="SINGLE_SOURCE",
                     primary=brand_inci_ref,
                     secondary=ret_ref,
                     notes="; ".join(
-                        [*notes, f"CONFLICT: retailer base list differs [{diff}] ({ret_url})"]
+                        [
+                            *notes,
+                            f"retailer base list differs [{diff}] ({ret_url})[{ret_market}]{alpha}"
+                            " — brand authoritative (EU-registered, descending-weight order); "
+                            "retailer annotated, not applied",
+                        ]
                     ),
                 )
         else:

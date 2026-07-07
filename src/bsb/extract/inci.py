@@ -49,6 +49,62 @@ _MARKETING = re.compile(
     r"|enriched|delivers|hilft|ihre haut|appliquer|peaux?)\b",
     re.IGNORECASE,
 )
+# retailer page furniture that leaks into a scraped "ingredient list": a
+# concentration table ("52 0 sodium-lauroyl-sarcosinate 24 0 …"), a list header
+# ("26 ingredients", "ingredient information") or a truncated link ("see full
+# ingredients list"). None of these are ingredient names.
+# \d{1,3}\s+\d{1,3}: the small "52 0 … 24 0" pairs of a concentration column —
+# bounded to short ints so it does NOT collide with space-joined 5-digit Colour
+# Index codes ("CI 77491 77492 77499"), which are a legitimate colorant grouping.
+_INCI_GARBAGE = re.compile(
+    r"\b\d{1,3}\s+\d{1,3}\b|\bingredient information\b|\bsee full\b"
+    r"|\bingredients?\s+list\b|^\s*\d+\s+ingredients?\b",
+    re.IGNORECASE,
+)
+# legal/disclaimer copy some brand accordions weave into the INGREDIENTS block
+# ("… [+/- Ci 77891]. Disclaimer: Product ingredient listings are updated
+# periodically. Before using … please read the ingredient list on the
+# packaging …"). Seen live: Benefit SFCC accordions, OR26BZFT0001.
+_INCI_TRAILER = re.compile(
+    r"\bdisclaimer\b|\bproduct ingredient listings?\b|\bplease read the ingredient",
+    re.IGNORECASE,
+)
+# prose function/legal words that never occur inside an INCI token but pepper a
+# disclaimer sentence. Used to drop prose SEGMENTS while keeping real
+# ingredients (even all-lowercase multi-word ones like "ammonium acrylates
+# copolymer", which a lowercase-word count would wrongly flag).
+_INCI_PROSE = re.compile(
+    r"\b(?:the|of|to|for|your|you|are|please|before|after|using|read|updated"
+    r"|periodically|recommend|personal|between|check|suppliers|disclaimer"
+    r"|listings?|information|our|their|appropriate|packaging|product)\b",
+    re.IGNORECASE,
+)
+# segment boundaries: INCI separators plus a sentence break (". ") so a disclaimer
+# fused onto the list ("…(titanium dioxide)]. Disclaimer:…", or a leading
+# "Product ingredient listings… Aqua ·") is isolated from real ingredients.
+_INCI_SEG_SPLIT = re.compile(r"[,·•;]|\.\s+")
+
+
+def _is_inci_prose(segment: str) -> bool:
+    return bool(_INCI_TRAILER.search(segment) or _MARKETING.search(segment)
+                or _INCI_PROSE.search(segment))
+
+
+def strip_inci_trailer(text: str) -> str:
+    """Remove legal/disclaimer PROSE (a leading preamble, a mid-list note, or a
+    trailing paragraph) from an extracted INCI, preserving the ingredient tokens
+    and the may-contain block around it. Content-preserving and
+    position-agnostic — a blunt cut-to-end deleted leading/mid-list content
+    (INCI review 2026-07). Only activates when a legal marker is present, so a
+    clean list is returned untouched."""
+    if not _INCI_TRAILER.search(text):
+        return text
+    kept = [
+        seg.strip()
+        for seg in _INCI_SEG_SPLIT.split(text)
+        if seg.strip() and not _is_inci_prose(seg)
+    ]
+    return ", ".join(kept)
 
 
 class InciCandidate(BaseModel):
@@ -79,6 +135,18 @@ def inci_plausible(text: str, labeled: bool = False) -> tuple[bool, str]:
     # ("Aqua*") is fine, but a token that is ONLY asterisks is a redaction.
     if any(re.fullmatch(r"\*+", t.strip()) for t in tokens):
         return False, "contains a masked/redacted ingredient (asterisks)"
+    # a single INCI token is a short nomenclature name; an over-long comma
+    # segment is leaked page copy (a disclaimer, marketing sentence or a "see
+    # full ingredients list" link), never an ingredient — reject regardless of
+    # how long the whole list is, so one or two prose runs can't slip under the
+    # fractional prose gate below (seen live on the generic-validator path:
+    # salontotal disclaimer, bluemercury marketing, world.* concentration dump).
+    # Slash separators are not word boundaries here — a spaced multilingual name
+    # ("Aqua / Water / Eau / Wasser / …") is one ingredient, not prose.
+    if any(sum(1 for w in t.split() if w != "/") > 12 for t in tokens):
+        return False, "over-long token (page copy leaked into the list)"
+    if any(_INCI_GARBAGE.search(t) for t in tokens):
+        return False, "concentration table / list header leaked into the list"
     if not labeled and not _LEAD_TOKENS.match(tokens[0].strip("[](): ")):
         return False, f"implausible leading ingredient {tokens[0][:30]!r}"
     prose = [t for t in tokens if _MARKETING.search(t) or len(t.split()) > 7]

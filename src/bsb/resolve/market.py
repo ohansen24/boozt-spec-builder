@@ -91,3 +91,28 @@ def classify_market(url: str) -> str:
 def is_eu_market(market: str | None) -> bool:
     """EU/UK sources satisfy Boozt's EU-registered-INCI requirement."""
     return market in ("EU", "UK")
+
+
+# INCI source authority for the conflict policy (Oli 2026-07). Higher wins:
+#   4  brand's own EU-registered site (authoritative order + nomenclature)
+#   3  EU/UK retailer
+#   2  non-EU retailer
+#   1  weak / no-GTIN support (notes only)
+# A LOWER-authority source may CONFIRM a higher one (-> green) or ANNOTATE it
+# (visible note), but never delete or demote it. Only EQUAL-authority sources
+# (retailer vs retailer with no brand list) may conflict to red. This is the
+# rule that stops a reordered/localised retailer list from nuking the brand's
+# own INCI. Documented alongside per-family capability in config/validators.yaml
+# (inci_capability).
+_BRAND_AUTHORITY = 4
+_WEAK_AUTHORITY = 1
+
+
+def inci_authority(market: str | None, *, is_brand: bool = False, is_weak: bool = False) -> int:
+    """Authority rank for an INCI source (see module note). Brand > EU/UK
+    retailer > non-EU retailer > weak."""
+    if is_brand:
+        return _BRAND_AUTHORITY
+    if is_weak:
+        return _WEAK_AUTHORITY
+    return 3 if is_eu_market(market) else 2

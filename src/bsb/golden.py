@@ -143,7 +143,7 @@ def _resolve_generic(
     resolver = adapter_cache.get("generic")
     if resolver is None:
         firecrawl = FirecrawlClient(fetcher.cache, fetcher.limiter)
-        resolver = GenericResolver(fetcher, firecrawl)
+        resolver = GenericResolver(fetcher, firecrawl, adapter_cache.get("_inci_blocklist"))
         adapter_cache["generic"] = resolver
     if not resolver.available:
         return None
@@ -190,6 +190,7 @@ def golden_compare(
     synonyms: dict,
     cache_dir,
     limit: int | None = None,
+    config_dir=None,
 ) -> GoldenResult:
     result = GoldenResult(brand=brand_key)
     adapter_type = brand_cfg.get("adapter")
@@ -205,7 +206,11 @@ def golden_compare(
 
     fetcher = PoliteFetcher(HttpCache(cache_dir))
     ean_cache = EanCache(cache_dir)
-    adapter_cache: dict = {}
+    from bsb.config import DEFAULT_CONFIG_DIR, load_inci_blocklist
+
+    adapter_cache: dict = {
+        "_inci_blocklist": load_inci_blocklist(config_dir or DEFAULT_CONFIG_DIR)
+    }
     rows = read_sheet_rows(answer_sheet, synonyms)
     if limit:
         rows = rows[:limit]
