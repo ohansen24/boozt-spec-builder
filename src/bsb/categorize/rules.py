@@ -36,6 +36,29 @@ _NEVER_PROPOSE = {1016, 1017, 1018}
 _NEUTRAL_ANCHORS = {1001, 1002, 1011, 1014}
 _DEFAULT_LOW_CHROMA = 20.0
 _WORD_TOKEN = re.compile(r"[^\W\d_]+", re.UNICODE)
+_INCI_TOKEN_SPLIT = re.compile(r"[,·•;]")
+
+
+def flammable_from_inci(inci_text: str | None, rules: dict) -> tuple[str | None, list[str]]:
+    """Decide flammability from the ingredient list — an aerosol propellant or
+    volatile solvent (config: flammable_inci_markers) makes a product flammable,
+    regardless of its Boozt category. Returns ("Yes", [matched markers]) if any
+    marker is present, ("No", []) if the INCI is present with none, or
+    (None, []) when there is no INCI to judge (caller falls back to the category
+    heuristic). Tokens are compared despaced/dehyphenated so localised spellings
+    ("Dimethylether", "alcoholdenat.") still match; parentheticals are dropped."""
+    if not inci_text or not str(inci_text).strip():
+        return None, []
+    markers = rules.get("flammable_inci_markers") or {}
+    exact = {str(m).lower() for m in markers.get("exact", [])}
+    prefixes = tuple(str(m).lower() for m in markers.get("prefix", []))
+    hits: list[str] = []
+    for raw in _INCI_TOKEN_SPLIT.split(str(inci_text)):
+        token = re.sub(r"\(.*?\)", "", raw).strip().lower().strip(" .")
+        key = re.sub(r"[\s\-]", "", token)  # despace + dehyphen
+        if key in exact or (prefixes and key.startswith(prefixes)):
+            hits.append(token)
+    return ("Yes", hits) if hits else ("No", [])
 
 
 def _hex_to_lab(value: str | None) -> tuple[float, float, float] | None:

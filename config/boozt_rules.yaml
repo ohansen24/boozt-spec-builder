@@ -213,6 +213,31 @@ dg_trigger_categories:
   - Deodorants
   - Home & Spa
 
+# Flammable (Y/N) is an INCI property, not a category one — a hairspray and a
+# conditioner are both "Hair care" but only the aerosol is flammable. An aerosol
+# propellant or volatile solvent in the ingredient list => flammable Yes,
+# overriding the category default. Matched despaced/dehyphenated at the
+# ingredient-token level, so localised spellings ("Dimethylether",
+# "alcoholdenat.") still hit. Plain "Alcohol"/"Ethanol" are INTENTIONALLY
+# excluded: fatty alcohols (Cetearyl/Cetyl Alcohol) are not flammable and a minor
+# ethanol in a leave-in is not classified flammable. Validated against Felina's
+# OR26BZNX0001 corrections (106/109; the misses were bad captured INCI, not the
+# rule). Felina's "anything with Butane => flammable" is a subset of this.
+flammable_inci_markers:
+  exact:
+    - butane
+    - isobutane
+    - propane
+    - isopentane
+    - pentane
+    - dimethylether
+    - hydrofluorocarbon
+    - hydrofluorocarbon152a
+    - hydrofluoroolefin
+  prefix:
+    - alcoholdenat
+    - sdalcohol
+
 # Dangerous goods: packing group vs flash point (guide table; Phase 1 module,
 # validation function tested now). Temperatures in Celsius.
 pg_flash_point:

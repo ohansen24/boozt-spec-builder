@@ -88,21 +88,9 @@ def build_record(
     cc = color_code_for(decision.category, row.shade, rules, brand_cfg, row.base_name)
     record.color_code = _color_code_field(cc, rules)
 
-    if decision.category in rules["dg_trigger_categories"]:
-        # DG rows are always red until a human confirms against the SDS (6.8)
-        record.flammable = FieldValue(
-            status="NOT_FOUND",
-            notes=f"DG-trigger category {decision.category!r} — requires SDS "
-            "review (Phase 1); never defaulted",
-        )
-    elif decision.category:
-        record.flammable = FieldValue(
-            value="No",
-            status="SINGLE_SOURCE",
-            notes=f"default for non-DG category {decision.category!r}",
-        )
-    else:
-        record.flammable = FieldValue(status="NOT_FOUND", notes="category undecided")
+    # Phase 1 has no resolved INCI yet -> _flammable_field falls back to the
+    # category heuristic (DG-trigger -> SDS review; other -> weak 'No').
+    record.flammable = _flammable_field(record.ingredients.value, decision.category, rules)
 
     style_policy = brand_cfg.get("style_number_policy") or {}
     if style_policy.get("by_design_blank"):
@@ -304,6 +292,43 @@ def _size_from_title(name: str | None):
     number, unit = match.group(1), match.group(2).lower()
     unit = _UNIT_NORMALIZE.get(unit, unit)
     return normalize_size(f"{number} {unit}")
+
+
+def _flammable_field(inci_value, category, rules, source_note=""):
+    """Flammable (Y/N) derived INCI-first (Oli/Felina 2026-07-15): an aerosol
+    propellant or volatile solvent in the list => Yes, overriding the category
+    default (a hairspray and a conditioner are both 'Hair care'). Precedence:
+    INCI says Yes -> Yes; else a DG-trigger category with no such marker -> SDS
+    review (red); else INCI present with none -> a confident No; else fall back
+    to the weak non-DG-category 'No'; else undecided."""
+    from bsb.categorize.rules import flammable_from_inci
+
+    verdict, hits = flammable_from_inci(inci_value, rules)
+    if verdict == "Yes":
+        return FieldValue(
+            value="Yes",
+            status="SINGLE_SOURCE",
+            notes=f"aerosol propellant / volatile solvent in INCI ({', '.join(hits)})"
+            + source_note,
+        )
+    if category in rules["dg_trigger_categories"]:
+        return FieldValue(
+            status="NOT_FOUND",
+            notes=f"DG-trigger category {category!r} — requires SDS review; never defaulted",
+        )
+    if verdict == "No":
+        return FieldValue(
+            value="No",
+            status="SINGLE_SOURCE",
+            notes="INCI present, no aerosol propellant / volatile solvent" + source_note,
+        )
+    if category:
+        return FieldValue(
+            value="No",
+            status="SINGLE_SOURCE",
+            notes=f"default for non-DG category {category!r} (no INCI to confirm)" + source_note,
+        )
+    return FieldValue(status="NOT_FOUND", notes="category undecided; no INCI")
 
 
 def build_retailer_inci_field(anchored, ref):
@@ -511,12 +536,11 @@ def apply_retailer_primary(record, row, hits, brand_cfg, rules) -> None:
             decision.category, record.color_name.value or row.shade, rules, brand_cfg, name_for_cat
         )
         record.color_code = _color_code_field(cc, rules)
-        if decision.category not in rules["dg_trigger_categories"]:
-            record.flammable = FieldValue(
-                value="No",
-                status="SINGLE_SOURCE",
-                notes=f"default for non-DG category {decision.category!r} (retailer-primary)",
-            )
+    # flammable is set unconditionally (outside the category gate): a propellant
+    # in the INCI flags Yes even for an orphan whose category didn't resolve.
+    record.flammable = _flammable_field(
+        record.ingredients.value, decision.category, rules, source_note="; retailer-primary"
+    )
 
 
 def _unpack_retailer_inci(retailer_inci):
@@ -943,20 +967,7 @@ def apply_resolution(
         )
         record.color_code = _color_code_field(cc, rules)
 
-    if decision.category in rules["dg_trigger_categories"]:
-        record.flammable = FieldValue(
-            status="NOT_FOUND",
-            notes=f"DG-trigger category {decision.category!r} — requires SDS review, "
-            "never defaulted",
-        )
-    elif decision.category:
-        record.flammable = FieldValue(
-            value="No",
-            status="SINGLE_SOURCE",
-            notes=f"default for non-DG category {decision.category!r}",
-        )
-    else:
-        record.flammable = FieldValue(status="NOT_FOUND", notes="category undecided")
+    record.flammable = _flammable_field(record.ingredients.value, decision.category, rules)
 
     if master.region in ("US", "ARCHIVE"):
         # non-primary brand evidence never ships green on its own
