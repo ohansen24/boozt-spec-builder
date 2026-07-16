@@ -114,15 +114,53 @@ def variant_axes(product: dict, variant: dict) -> dict[str, str]:
 
 class ShopifyAdapter:
     def __init__(self, fetcher: PoliteFetcher, brand_cfg: dict, ean_cache: EanCache):
+        from bsb.resolve.market import eu_first_domains
+
         shopify_cfg = brand_cfg.get("shopify") or {}
         domain = shopify_cfg.get("domain") or (brand_cfg.get("domains") or [None])[0]
         if not domain:
             raise ValueError("shopify adapter needs a domain (brands.yaml shopify.domain)")
-        prefix = str(shopify_cfg.get("path_prefix") or "").strip("/")
-        self.base = f"https://{domain}" + (f"/{prefix}" if prefix else "")
+        self._prefix = str(shopify_cfg.get("path_prefix") or "").strip("/")
+        self._configured_domain = domain.strip().lower()
+        # EU-market-first source selection (Oli 2026-07-16): try the brand's .de
+        # site, then other EU markets, .com last — the EU listing carries the
+        # fuller regulatory ingredient list. brand_cfg["market_domains"] (ordered)
+        # overrides the TLD-swap for brands whose EU domain isn't a plain swap.
+        self._candidates = (
+            [str(d).strip().lower() for d in brand_cfg["market_domains"]]
+            if brand_cfg.get("market_domains")
+            else eu_first_domains(self._configured_domain)
+        )
+        self.base = self._base_for(self._configured_domain)  # default; refined lazily
+        self._base_selected = False
+        self.selected_domain = self._configured_domain
         self.fetcher = fetcher
         self.ean_cache = ean_cache
         self._catalog: dict[str, tuple[dict, dict]] | None = None  # barcode -> (product, variant)
+
+    def _base_for(self, domain: str) -> str:
+        # the market-path prefix only applies to the originally-configured domain
+        use_prefix = self._prefix and domain == self._configured_domain
+        return f"https://{domain}" + (f"/{self._prefix}" if use_prefix else "")
+
+    def _select_base(self) -> None:
+        """Pick the highest-priority (EU-first) domain that is a reachable Shopify
+        store with a stocked catalog; fall back to the configured domain. Probed
+        once, lazily, before the catalog is built."""
+        if self._base_selected:
+            return
+        self._base_selected = True
+        for cand in self._candidates:
+            base = self._base_for(cand)
+            try:
+                fetch = self.fetcher.get(f"{base}/products.json?limit=1")
+                products = json.loads(fetch.text).get("products")
+            except (FetchError, json.JSONDecodeError):
+                continue
+            if isinstance(products, list) and products:
+                self.base = base
+                self.selected_domain = cand
+                return
 
     def _catalog_pages(self):
         for page in range(1, MAX_CATALOG_PAGES + 1):
@@ -198,6 +236,7 @@ class ShopifyAdapter:
         paginated public catalog (each page is cached)."""
         if self._catalog is not None:
             return self._catalog
+        self._select_base()  # EU-market-first domain before scanning the catalog
         catalog: dict[str, tuple[dict, dict]] = {}
         self._last_page_url = None
         for url, products in self._catalog_pages():

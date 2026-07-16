@@ -93,6 +93,38 @@ def is_eu_market(market: str | None) -> bool:
     return market in ("EU", "UK")
 
 
+# Brand-site market priority (Oli 2026-07-16): the EU regulates cosmetic
+# chemicals / colourants / additives more tightly than the US, so a brand's
+# EU-market site carries the fuller, correct ingredient list. Try Germany first
+# (our operating market), then the other big EU markets, EU/UK equivalents, and
+# .com (US) only as a LAST resort. Proven live: marianila.de matched the pack
+# INCI exactly where marianila.com did not.
+MARKET_DOMAIN_PRIORITY = (
+    "de", "fr", "it", "es", "nl", "at", "be", "se", "dk", "fi", "pl",
+    "ie", "pt", "cz", "gr", "eu", "co.uk", "uk", "com",
+)
+
+
+def eu_first_domains(domain: str, priority=MARKET_DOMAIN_PRIORITY) -> list[str]:
+    """Candidate brand domains for one brand, EU-market first. Swaps the TLD of
+    the configured domain across the priority list — "marianila.com" ->
+    ["marianila.de", "marianila.fr", …, "marianila.com"]. The configured domain
+    is always included (as a fallback) even if its TLD is not in the list."""
+    host = domain.strip().lower().removeprefix("https://").removeprefix("http://")
+    host = host.split("/")[0].removeprefix("www.")
+    stem = host.split(".")[0]
+    if not stem:
+        return [host]
+    out: list[str] = []
+    for tld in priority:
+        cand = f"{stem}.{tld}"
+        if cand not in out:
+            out.append(cand)
+    if host not in out:
+        out.append(host)
+    return out
+
+
 # INCI source authority for the conflict policy (Oli 2026-07). Higher wins:
 #   4  brand's own EU-registered site (authoritative order + nomenclature)
 #   3  EU/UK retailer
